@@ -9,11 +9,7 @@ import { UserModule } from '../user/user.module';
 import { OpenAIModule } from '../openai/openai.module';
 import { NotificationModule } from '../notification/notification.module';
 
-/**
- * BotModule provides Telegram bot handlers
- * It imports all dependencies needed by handlers
- * TelegramBotService gets handlers via DI from this module
- */
+
 @Module({
   imports: [NotificationModule, TaskModule, UserModule, OpenAIModule],
   providers: [MessageHandler, CallbackHandler, CommandHandler],

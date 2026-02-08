@@ -134,9 +134,8 @@ export class CallbackHandler {
       await ctx.answerCallbackQuery({ text: '❌ Task not found' });
       return false;
     }
-
     // Check if task belongs to the current user
-    if (task.userId !== ctx.from.id.toString()) {
+    if (task.telegramChatId.toString() !== ctx.from.id.toString()) {
       await ctx.answerCallbackQuery({ text: '❌ Unauthorized' });
       return false;
     }
