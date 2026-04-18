@@ -20,6 +20,6 @@ import { EnsureUserUsecase, UpdateTimezoneUsecase } from '@usecases/user';
     EnsureUserUsecase,
     UpdateTimezoneUsecase,
   ],
-  exports: [EnsureUserUsecase, UpdateTimezoneUsecase],
+  exports: [Domain.User.Repository, EnsureUserUsecase, UpdateTimezoneUsecase],
 })
 export class UserModule {}

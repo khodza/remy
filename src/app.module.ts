@@ -7,6 +7,7 @@ import { OpenAIModule } from './application/common/openai/openai.module';
 import { NotificationModule } from './application/common/notification/notification.module';
 import { BotModule } from './application/common/bot/bot.module';
 import { RemindersSchedulerModule } from './application/common/scheduler/scheduler.module';
+import { HttpModule } from './application/common/http/http.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { RemindersSchedulerModule } from './application/common/scheduler/schedul
     NotificationModule,
     BotModule, // Import after NotificationModule to provide handlers
     RemindersSchedulerModule,
+    HttpModule,
   ],
 })
 export class AppModule {}
