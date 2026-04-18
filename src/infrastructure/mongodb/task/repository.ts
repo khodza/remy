@@ -7,8 +7,13 @@ import {
   CreateTaskParams,
   UpdateTaskParams,
   TaskStatus,
+  Recurrence,
 } from '@domain/task/repository';
-import { TaskDocument, TaskHydratedDocument } from './document';
+import {
+  TaskDocument,
+  TaskHydratedDocument,
+  RecurrenceSubdoc,
+} from './document';
 import { Collections } from '../collections';
 import {
   TaskNotFoundError,
@@ -32,6 +37,7 @@ export class TaskRepositoryImpl implements TaskRepository {
         description: params.description,
         scheduled_at: params.scheduledAt,
         status: TaskStatus.Pending,
+        recurrence: recurrenceToSubdoc(params.recurrence ?? null),
       });
       return this.documentToEntity(doc);
     } catch (error) {
@@ -84,6 +90,8 @@ export class TaskRepositoryImpl implements TaskRepository {
       if (params.status !== undefined) updateData['status'] = params.status;
       if (params.lastSentAt !== undefined)
         updateData['last_sent_at'] = params.lastSentAt;
+      if (params.recurrence !== undefined)
+        updateData['recurrence'] = recurrenceToSubdoc(params.recurrence);
 
       const doc = await this.model.findByIdAndUpdate(
         params.id,
@@ -117,9 +125,31 @@ export class TaskRepositoryImpl implements TaskRepository {
       description: document.description,
       scheduledAt: document.scheduled_at,
       status: document.status as TaskStatus,
+      recurrence: subdocToRecurrence(document.recurrence),
       lastSentAt: document.last_sent_at,
       createdAt: document.created_at,
       updatedAt: document.updated_at,
     };
   }
+}
+
+function recurrenceToSubdoc(
+  recurrence: Recurrence | null | undefined,
+): RecurrenceSubdoc | null {
+  if (!recurrence) return null;
+  const doc: RecurrenceSubdoc = { type: recurrence.type };
+  if (recurrence.intervalDays !== undefined) {
+    doc.intervalDays = recurrence.intervalDays;
+  }
+  return doc;
+}
+
+function subdocToRecurrence(
+  subdoc: RecurrenceSubdoc | null | undefined,
+): Recurrence | null {
+  if (!subdoc) return null;
+  const { type, intervalDays } = subdoc;
+  const recurrence: Recurrence = { type: type as Recurrence['type'] };
+  if (typeof intervalDays === 'number') recurrence.intervalDays = intervalDays;
+  return recurrence;
 }

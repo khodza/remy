@@ -35,6 +35,7 @@ export class ProcessTextMessageUsecase {
         telegramChatId: input.telegramChatId,
         description: parsed.description,
         scheduledAt: parsed.scheduledAt,
+        recurrence: parsed.recurrence,
       });
 
       return {

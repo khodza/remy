@@ -46,6 +46,7 @@ describe('ProcessTextMessageUsecase', () => {
     taskParserGateway.parse.mockResolvedValue({
       description: 'Buy groceries',
       scheduledAt,
+      recurrence: null,
     });
     taskRepository.create.mockResolvedValue(mockTask);
 
@@ -65,6 +66,7 @@ describe('ProcessTextMessageUsecase', () => {
       telegramChatId: 12345,
       description: 'Buy groceries',
       scheduledAt,
+      recurrence: null,
     });
     expect(result).toEqual({
       taskId: 'task-1',

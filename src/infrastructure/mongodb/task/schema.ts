@@ -1,6 +1,18 @@
 import { Schema } from 'mongoose';
 import { TaskDocument } from './document';
 
+const RecurrenceSchema = new Schema(
+  {
+    type: {
+      type: String,
+      enum: ['daily', 'weekdays', 'weekly', 'monthly', 'every_n_days'],
+      required: true,
+    },
+    intervalDays: { type: Number, required: false, min: 1 },
+  },
+  { _id: false },
+);
+
 export const TaskSchema = new Schema<TaskDocument>(
   {
     user_id: { type: String, required: true, index: true },
@@ -13,6 +25,7 @@ export const TaskSchema = new Schema<TaskDocument>(
       enum: ['pending', 'completed', 'overdue', 'deleted'],
       index: true,
     },
+    recurrence: { type: RecurrenceSchema, required: false, default: null },
     last_sent_at: { type: Date, required: false }, // Track when reminder was last sent
   },
   {

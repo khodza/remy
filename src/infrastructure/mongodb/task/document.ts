@@ -1,5 +1,10 @@
 import { Types, HydratedDocument } from 'mongoose';
 
+export type RecurrenceSubdoc = {
+  type: string;
+  intervalDays?: number;
+};
+
 export type TaskDocument = {
   _id: Types.ObjectId;
   user_id: string;
@@ -7,6 +12,7 @@ export type TaskDocument = {
   description: string;
   scheduled_at: Date;
   status: string;
+  recurrence?: RecurrenceSubdoc | null;
   last_sent_at?: Date;
   created_at: Date;
   updated_at: Date;

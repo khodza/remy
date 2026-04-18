@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Domain } from '@common/tokens';
-import type { Task, TaskRepository } from '@domain/task';
+import type { Recurrence, Task, TaskRepository } from '@domain/task';
 import { TaskNotFoundError } from '@domain/task';
 import type { UserRepository } from '@domain/user';
 import { UserNotFoundError } from '@domain/user';
@@ -46,6 +46,7 @@ export interface TaskDto {
   description: string;
   scheduledAt: string;
   status: Task['status'];
+  recurrence: Recurrence | null;
   isOverdue?: boolean;
   createdAt: string;
   updatedAt: string;
@@ -57,6 +58,7 @@ function toDto(task: Task | TaskWithOverdueFlag): TaskDto {
     description: task.description,
     scheduledAt: task.scheduledAt.toISOString(),
     status: task.status,
+    recurrence: task.recurrence ?? null,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
   };
@@ -174,6 +176,9 @@ export class TaskController {
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.scheduledAt !== undefined
         ? { scheduledAt: new Date(dto.scheduledAt) }
+        : {}),
+      ...(dto.recurrence !== undefined
+        ? { recurrence: dto.recurrence as Recurrence | null }
         : {}),
     });
     return toDto(updated);
