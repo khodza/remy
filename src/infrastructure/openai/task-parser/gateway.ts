@@ -66,11 +66,27 @@ Important:
         throw new Error('No response from OpenAI');
       }
 
-      const parsed = JSON.parse(content);
+      const parsed: unknown = JSON.parse(content);
+
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        !('description' in parsed) ||
+        !('scheduledAt' in parsed) ||
+        typeof (parsed as Record<string, unknown>)['description'] !== 'string' ||
+        typeof (parsed as Record<string, unknown>)['scheduledAt'] !== 'string'
+      ) {
+        throw new Error('Invalid response format from OpenAI');
+      }
+
+      const { description, scheduledAt } = parsed as {
+        description: string;
+        scheduledAt: string;
+      };
 
       return {
-        description: parsed.description,
-        scheduledAt: parseISO(parsed.scheduledAt),
+        description,
+        scheduledAt: parseISO(scheduledAt),
       };
     } catch (error) {
       throw new ParsingFailedError('Failed to parse task from text', error);

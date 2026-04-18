@@ -134,8 +134,16 @@ export class CallbackHandler {
       await ctx.answerCallbackQuery({ text: '❌ Task not found' });
       return false;
     }
-    // Check if task belongs to the current user
-    if (task.telegramChatId.toString() !== ctx.from.id.toString()) {
+
+    // Look up the DB user by Telegram ID and compare against task owner
+    const user = await this.ensureUserUsecase.execute({
+      telegramUserId: ctx.from.id,
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+      username: ctx.from.username,
+    });
+
+    if (task.userId !== user.id) {
       await ctx.answerCallbackQuery({ text: '❌ Unauthorized' });
       return false;
     }

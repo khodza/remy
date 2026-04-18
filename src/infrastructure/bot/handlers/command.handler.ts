@@ -65,15 +65,37 @@ export class CommandHandler {
         return;
       }
 
-      let message = `📋 *Your Tasks:*\n\n`;
-      for (const task of result.tasks) {
-        const emoji = task.isOverdue ? '🔴' : '🟢';
-        const status = task.isOverdue ? '(Overdue)' : '';
-        message += `${emoji} *${task.description}*\n`;
-        message += `   ⏰ ${format(task.scheduledAt, 'PPpp')} ${status}\n\n`;
+      const tasks = result.tasks;
+      const tasksWithButtons = tasks.slice(-3);
+      const tasksWithoutButtons = tasks.slice(0, -3);
+
+      // Show older tasks as plain text
+      if (tasksWithoutButtons.length > 0) {
+        let message = `📋 *Your Tasks:*\n\n`;
+        for (const task of tasksWithoutButtons) {
+          const emoji = task.isOverdue ? '🔴' : '🟢';
+          const status = task.isOverdue ? '(Overdue)' : '';
+          message += `${emoji} *${task.description}*\n`;
+          message += `   ⏰ ${format(task.scheduledAt, 'PPpp')} ${status}\n\n`;
+        }
+        await ctx.reply(message, { parse_mode: 'Markdown' });
+      } else {
+        await ctx.reply(`📋 *Your Tasks:*`, { parse_mode: 'Markdown' });
       }
 
-      await ctx.reply(message, { parse_mode: 'Markdown' });
+      // Show last 3 tasks with action buttons
+      for (const task of tasksWithButtons) {
+        const emoji = task.isOverdue ? '🔴' : '🟢';
+        const status = task.isOverdue ? ' (Overdue)' : '';
+        const text = `${emoji} *${task.description}*\n⏰ ${format(task.scheduledAt, 'PPpp')}${status}`;
+
+        const keyboard = new InlineKeyboard()
+          .text('✅ Done', `complete:${task.id}`)
+          .text('⏰ Delay', `delay:${task.id}:15`)
+          .text('🗑️ Delete', `delete:${task.id}`);
+
+        await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+      }
     } catch (error) {
       console.error('Failed to handle list command:', error);
       await ctx.reply('❌ Failed to fetch tasks. Please try again.');
