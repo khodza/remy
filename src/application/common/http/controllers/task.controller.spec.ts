@@ -8,6 +8,7 @@ import type {
   ListTasksUsecase,
   MarkCompleteUsecase,
   ProcessTextMessageUsecase,
+  ProcessVoiceMessageUsecase,
 } from '@usecases/task';
 import { TaskController } from './task.controller';
 import type { AuthContext } from '../types';
@@ -43,6 +44,7 @@ describe('TaskController', () => {
   let userRepository: jest.Mocked<UserRepository>;
   let listTasks: jest.Mocked<Pick<ListTasksUsecase, 'execute'>>;
   let processText: jest.Mocked<Pick<ProcessTextMessageUsecase, 'execute'>>;
+  let processVoice: jest.Mocked<Pick<ProcessVoiceMessageUsecase, 'execute'>>;
   let markComplete: jest.Mocked<Pick<MarkCompleteUsecase, 'execute'>>;
   let delayTask: jest.Mocked<Pick<DelayTaskUsecase, 'execute'>>;
   let deleteTask: jest.Mocked<Pick<DeleteTaskUsecase, 'execute'>>;
@@ -65,6 +67,7 @@ describe('TaskController', () => {
     };
     listTasks = { execute: jest.fn() };
     processText = { execute: jest.fn() };
+    processVoice = { execute: jest.fn() };
     markComplete = { execute: jest.fn() };
     delayTask = { execute: jest.fn() };
     deleteTask = { execute: jest.fn() };
@@ -74,6 +77,7 @@ describe('TaskController', () => {
       userRepository,
       listTasks as unknown as ListTasksUsecase,
       processText as unknown as ProcessTextMessageUsecase,
+      processVoice as unknown as ProcessVoiceMessageUsecase,
       markComplete as unknown as MarkCompleteUsecase,
       delayTask as unknown as DelayTaskUsecase,
       deleteTask as unknown as DeleteTaskUsecase,

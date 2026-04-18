@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,10 +8,14 @@ import {
   Inject,
   Param,
   Patch,
+  PayloadTooLargeException,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Domain } from '@common/tokens';
 import type { Task, TaskRepository } from '@domain/task';
 import { TaskNotFoundError } from '@domain/task';
@@ -22,6 +27,7 @@ import {
   ListTasksUsecase,
   MarkCompleteUsecase,
   ProcessTextMessageUsecase,
+  ProcessVoiceMessageUsecase,
 } from '@usecases/task';
 import type { TaskWithOverdueFlag } from '@usecases/task';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -31,6 +37,9 @@ import { DelayTaskDto } from '../dto/delay-task.dto';
 import { ListTasksQueryDto } from '../dto/list-tasks-query.dto';
 import { UpdateTaskDto } from '../dto/update-task.dto';
 import type { AuthContext } from '../types';
+
+const VOICE_MAX_BYTES = 20 * 1024 * 1024; // 20 MiB
+const VOICE_ALLOWED_MIME_PREFIXES = ['audio/', 'video/webm'];
 
 export interface TaskDto {
   id: string;
@@ -65,6 +74,7 @@ export class TaskController {
     private readonly userRepository: UserRepository,
     private readonly listTasksUsecase: ListTasksUsecase,
     private readonly processTextMessageUsecase: ProcessTextMessageUsecase,
+    private readonly processVoiceMessageUsecase: ProcessVoiceMessageUsecase,
     private readonly markCompleteUsecase: MarkCompleteUsecase,
     private readonly delayTaskUsecase: DelayTaskUsecase,
     private readonly deleteTaskUsecase: DeleteTaskUsecase,
@@ -102,6 +112,52 @@ export class TaskController {
     const task = await this.taskRepository.findById(result.taskId);
     if (!task) {
       throw new TaskNotFoundError(`Task ${result.taskId} not found after create`);
+    }
+    return toDto(task);
+  }
+
+  @Post('voice')
+  @UseInterceptors(
+    FileInterceptor('audio', {
+      limits: { fileSize: VOICE_MAX_BYTES },
+    }),
+  )
+  async createFromVoice(
+    @CurrentUser() auth: AuthContext,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ): Promise<TaskDto> {
+    if (!file) {
+      throw new BadRequestException('audio file is required');
+    }
+    if (file.size === 0) {
+      throw new BadRequestException('audio file is empty');
+    }
+    if (file.size > VOICE_MAX_BYTES) {
+      throw new PayloadTooLargeException('audio file exceeds 20 MiB limit');
+    }
+    const mime = file.mimetype || 'application/octet-stream';
+    if (!VOICE_ALLOWED_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))) {
+      throw new BadRequestException(`unsupported audio mime type: ${mime}`);
+    }
+
+    const user = await this.userRepository.findById(auth.userId);
+    if (!user) {
+      throw new UserNotFoundError(`User ${auth.userId} not found`);
+    }
+
+    const result = await this.processVoiceMessageUsecase.execute({
+      userId: user.id,
+      telegramChatId: user.telegramUserId,
+      audioFileBuffer: file.buffer,
+      mimeType: mime,
+      ...(user.timezone ? { userTimezone: user.timezone } : {}),
+    });
+
+    const task = await this.taskRepository.findById(result.taskId);
+    if (!task) {
+      throw new TaskNotFoundError(
+        `Task ${result.taskId} not found after create`,
+      );
     }
     return toDto(task);
   }

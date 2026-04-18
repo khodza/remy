@@ -60,7 +60,8 @@
     "verbatimModuleSyntax": false,
     "types": [
       "node",
-      "@types/jest"
+      "@types/jest",
+      "@types/multer"
     ]
   }
 }
