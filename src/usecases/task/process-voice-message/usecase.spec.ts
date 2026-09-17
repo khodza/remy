@@ -35,6 +35,7 @@ describe('ProcessVoiceMessageUsecase', () => {
       taskId: 'task-1',
       description: 'Buy groceries',
       scheduledAt,
+      timezone: 'UTC',
       recurrence: null,
     });
 
@@ -60,6 +61,7 @@ describe('ProcessVoiceMessageUsecase', () => {
       taskId: 'task-1',
       description: 'Buy groceries',
       scheduledAt,
+      timezone: 'UTC',
       recurrence: null,
       transcribedText: 'Buy groceries at 3pm',
     });

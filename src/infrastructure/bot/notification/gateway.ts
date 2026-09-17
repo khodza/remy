@@ -5,8 +5,8 @@ import { SendReminderInput } from '@domain/notification/gateway/types';
 import { NotificationFailedError } from '@domain/notification/errors';
 import { TelegramBotService } from '../bot.service';
 import { escapeHtml } from '../html';
-import { format } from 'date-fns';
 import { describeRecurrence } from '@common/recurrence';
+import { formatForUser } from '@common/format-date';
 
 @Injectable()
 export class NotificationGatewayImpl implements NotificationGateway {
@@ -27,7 +27,7 @@ export class NotificationGatewayImpl implements NotificationGateway {
     try {
       await bot.api.sendMessage(
         input.chatId,
-        `🔔 <b>Reminder!</b>\n\n📝 ${escapeHtml(input.description)}\n⏰ Scheduled: ${format(input.scheduledAt, 'PPpp')}${repeatLine}`,
+        `🔔 <b>Reminder!</b>\n\n📝 ${escapeHtml(input.description)}\n⏰ ${formatForUser(input.scheduledAt, input.timezone)}${repeatLine}`,
         { reply_markup: keyboard, parse_mode: 'HTML' },
       );
     } catch (error) {

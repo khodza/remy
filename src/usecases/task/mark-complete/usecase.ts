@@ -24,25 +24,44 @@ export class MarkCompleteUsecase {
       }
 
       // Recurring tasks never "complete" — they advance to the next
-      // occurrence so the user keeps getting reminded. Moving scheduledAt
-      // past lastSentAt re-arms the scheduler's once-per-occurrence
-      // reminder, so we don't need to touch lastSentAt here.
+      // occurrence so the user keeps getting reminded.
       if (existing.recurrence) {
+        const now = new Date();
+        // Idempotent: if the series already sits in the future (a stale
+        // reminder message tapped twice, or two old messages tapped in a
+        // row), don't skip a cycle.
+        if (
+          existing.scheduledAt.getTime() > now.getTime() &&
+          existing.status === TaskStatus.Pending
+        ) {
+          return { ...existing, alreadyDone: true };
+        }
         const nextAt = computeNextOccurrence(
           existing.scheduledAt,
           existing.recurrence,
+          now,
+          existing.timezone,
         );
-        return await this.taskRepository.update({
+        // Moving scheduledAt (and clearing the snooze) moves nextFireAt past
+        // lastSentAt, which re-arms the scheduler's once-per-fire reminder.
+        const updated = await this.taskRepository.update({
           id: input.taskId,
           scheduledAt: nextAt,
+          snoozedUntil: null,
           status: TaskStatus.Pending,
         });
+        return { ...updated, alreadyDone: false };
       }
 
-      return await this.taskRepository.update({
+      if (existing.status === TaskStatus.Completed) {
+        return { ...existing, alreadyDone: true };
+      }
+
+      const updated = await this.taskRepository.update({
         id: input.taskId,
         status: TaskStatus.Completed,
       });
+      return { ...updated, alreadyDone: false };
     } catch (error) {
       if (error instanceof ApplicationError) throw error;
       throw new FailedToUpdateTaskError('Failed to mark task complete', error);

@@ -6,6 +6,15 @@ import { z } from 'zod';
  * fast with a readable list instead of surfacing as a runtime error later.
  */
 
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const boolish = z.preprocess((value) => {
   if (typeof value === 'string') {
     return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
@@ -51,6 +60,17 @@ export const envSchema = z
      * Telegram user and the HTTP API rejects their initData / tokens.
      */
     OWNER_TELEGRAM_ID: z.coerce.number().int().positive().optional(),
+    /**
+     * IANA timezone applied to new users and to legacy tasks without one.
+     * The Mini App overrides it with the detected zone on first open.
+     */
+    OWNER_TIMEZONE: z
+      .string()
+      .min(1)
+      .optional()
+      .refine((tz) => tz === undefined || isValidTimeZone(tz), {
+        message: 'must be a valid IANA timezone such as Asia/Tashkent',
+      }),
 
     /**
      * Development only: accept the Mini App's mocked initData

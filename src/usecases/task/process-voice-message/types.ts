@@ -12,6 +12,7 @@ export type ProcessVoiceMessageOutput = {
   taskId: string;
   description: string;
   scheduledAt: Date;
+  timezone: string;
   recurrence: Recurrence | null;
   transcribedText: string;
 };

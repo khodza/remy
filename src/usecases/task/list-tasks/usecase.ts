@@ -27,7 +27,7 @@ export class ListTasksUsecase {
     const tasksWithOverdueFlag: TaskWithOverdueFlag[] = filteredTasks.map(
       (task) => ({
         ...task,
-        isOverdue: task.status === TaskStatus.Pending && task.scheduledAt < now,
+        isOverdue: task.status === TaskStatus.Pending && task.nextFireAt < now,
       }),
     );
 

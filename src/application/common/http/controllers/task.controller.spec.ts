@@ -13,6 +13,8 @@ import type {
 import { TaskController } from './task.controller';
 import type { AuthContext } from '../types';
 
+import { mockTaskRepository } from '@test/factories';
+
 describe('TaskController', () => {
   const now = new Date('2026-04-18T12:00:00Z');
   const auth: AuthContext = { userId: 'owner-1', telegramUserId: 42 };
@@ -24,6 +26,10 @@ describe('TaskController', () => {
     telegramChatId: 42,
     description: 'Buy milk',
     scheduledAt: new Date('2026-04-19T09:00:00Z'),
+    timezone: 'America/New_York',
+    snoozedUntil: null,
+    nextFireAt: new Date('2026-04-19T09:00:00Z'),
+    nextAttemptAt: null,
     status: TaskStatus.Pending,
     createdAt: now,
     updatedAt: now,
@@ -51,15 +57,7 @@ describe('TaskController', () => {
   let controller: TaskController;
 
   beforeEach(() => {
-    taskRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findPendingReminders: jest.fn(),
-      findOverdueRecurring: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    };
+    taskRepository = mockTaskRepository();
     userRepository = {
       save: jest.fn(),
       findByTelegramUserId: jest.fn(),
@@ -91,11 +89,14 @@ describe('TaskController', () => {
         taskId: 'task-1',
         description: 'Buy milk',
         scheduledAt: ownedTask.scheduledAt,
+        timezone: 'America/New_York',
         recurrence: null,
       });
       taskRepository.findById.mockResolvedValue(ownedTask);
 
-      const dto = await controller.create(auth, { text: 'buy milk tomorrow 9am' });
+      const dto = await controller.create(auth, {
+        text: 'buy milk tomorrow 9am',
+      });
 
       expect(processText.execute).toHaveBeenCalledWith({
         userId: 'owner-1',
@@ -112,6 +113,7 @@ describe('TaskController', () => {
         taskId: 'task-1',
         description: 'Buy milk',
         scheduledAt: ownedTask.scheduledAt,
+        timezone: 'America/New_York',
         recurrence: null,
       });
       taskRepository.findById.mockResolvedValue(ownedTask);
@@ -129,9 +131,9 @@ describe('TaskController', () => {
   describe('ownership', () => {
     it('returns 403 when completing a task owned by another user', async () => {
       taskRepository.findById.mockResolvedValue(ownedTask);
-      await expect(controller.complete(foreignAuth, 'task-1')).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        controller.complete(foreignAuth, 'task-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(markComplete.execute).not.toHaveBeenCalled();
     });
 
@@ -147,6 +149,7 @@ describe('TaskController', () => {
       markComplete.execute.mockResolvedValue({
         ...ownedTask,
         status: TaskStatus.Completed,
+        alreadyDone: false,
       });
 
       const dto = await controller.complete(auth, 'task-1');
@@ -165,9 +168,9 @@ describe('TaskController', () => {
 
     it('blocks delete on a task owned by another user', async () => {
       taskRepository.findById.mockResolvedValue(ownedTask);
-      await expect(controller.remove(foreignAuth, 'task-1')).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        controller.remove(foreignAuth, 'task-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(deleteTask.execute).not.toHaveBeenCalled();
     });
   });

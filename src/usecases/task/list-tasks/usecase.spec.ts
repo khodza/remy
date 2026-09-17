@@ -3,6 +3,11 @@ import type { TaskRepository } from '@domain/task/repository';
 import { TaskStatus } from '@domain/task';
 import type { Task } from '@domain/task';
 
+import {
+  makeTask as makeTaskFixture,
+  mockTaskRepository,
+} from '@test/factories';
+
 describe('ListTasksUsecase', () => {
   let usecase: ListTasksUsecase;
   let taskRepository: jest.Mocked<TaskRepository>;
@@ -11,31 +16,18 @@ describe('ListTasksUsecase', () => {
   const past = new Date('2026-04-15T10:00:00Z');
   const future = new Date('2026-04-17T10:00:00Z');
 
-  const makeTask = (overrides: Partial<Task>): Task => ({
-    id: 'task-1',
-    userId: 'user-1',
-    telegramChatId: 12345,
-    description: 'Test task',
-    scheduledAt: future,
-    status: TaskStatus.Pending,
-    createdAt: now,
-    updatedAt: now,
-    ...overrides,
-  });
+  const makeTask = (overrides: Partial<Task>): Task =>
+    makeTaskFixture({
+      description: 'Test task',
+      scheduledAt: future,
+      ...overrides,
+    });
 
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(now);
 
-    taskRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findPendingReminders: jest.fn(),
-      findOverdueRecurring: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    };
+    taskRepository = mockTaskRepository();
 
     usecase = new ListTasksUsecase(taskRepository);
   });

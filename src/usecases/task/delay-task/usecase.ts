@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { TaskRepository } from '@domain/task/repository';
+import { TaskRepository, TaskStatus } from '@domain/task/repository';
 import { Domain } from '@common/tokens';
 import { DelayTaskInput, DelayTaskOutput } from './types';
 import { ApplicationError } from '@domain/error';
@@ -7,6 +7,7 @@ import {
   FailedToUpdateTaskError,
   TaskNotFoundError,
 } from '@domain/task/errors';
+import { InvalidInputError } from '@common/errors';
 import { addMinutes, max } from 'date-fns';
 import { validateDelayMinutes } from '@common/validation';
 
@@ -19,30 +20,37 @@ export class DelayTaskUsecase {
 
   public async execute(input: DelayTaskInput): Promise<DelayTaskOutput> {
     try {
-      // Validate delay minutes
       validateDelayMinutes(input.delayMinutes);
 
-      // Find task
       const task = await this.taskRepository.findById(input.taskId);
       if (task === null) {
         throw new TaskNotFoundError(`Task with id ${input.taskId} not found`);
       }
+      if (task.status !== TaskStatus.Pending) {
+        throw new InvalidInputError('Only pending tasks can be delayed');
+      }
 
-      // Calculate new scheduled time. Snoozing an overdue task counts from
-      // now: adding to the old time would leave it in the past, and the
-      // reminder would fire again immediately.
-      const newScheduledAt = addMinutes(
-        max([task.scheduledAt, new Date()]),
-        input.delayMinutes,
-      );
+      // Snoozing an overdue task counts from now: adding to the old time
+      // would leave it in the past, and the reminder would fire again
+      // immediately.
+      const from = max([task.nextFireAt, new Date()]);
+      const until = addMinutes(from, input.delayMinutes);
 
-      // Update task
-      const updatedTask = await this.taskRepository.update({
+      // A recurring task keeps its series time; only this occurrence moves.
+      // Otherwise "daily at 09:00" snoozed by an hour becomes "daily at
+      // 10:00" forever.
+      if (task.recurrence) {
+        return await this.taskRepository.update({
+          id: input.taskId,
+          snoozedUntil: until,
+        });
+      }
+
+      return await this.taskRepository.update({
         id: input.taskId,
-        scheduledAt: newScheduledAt,
+        scheduledAt: until,
+        snoozedUntil: null,
       });
-
-      return updatedTask;
     } catch (error) {
       if (error instanceof ApplicationError) throw error;
       throw new FailedToUpdateTaskError('Failed to delay task', error);

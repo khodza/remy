@@ -29,19 +29,26 @@ export class ProcessTextMessageUsecase {
         userTimezone: input.userTimezone,
       });
 
+      const timezone = input.userTimezone ?? 'UTC';
+      const recurrence = parsed.recurrence
+        ? { ...parsed.recurrence, anchorAt: parsed.scheduledAt }
+        : null;
+
       // Create task
       const task = await this.taskRepository.create({
         userId: input.userId,
         telegramChatId: input.telegramChatId,
         description: parsed.description,
         scheduledAt: parsed.scheduledAt,
-        recurrence: parsed.recurrence,
+        timezone,
+        recurrence,
       });
 
       return {
         taskId: task.id,
         description: task.description,
         scheduledAt: task.scheduledAt,
+        timezone: task.timezone,
         recurrence: task.recurrence ?? null,
       };
     } catch (error) {

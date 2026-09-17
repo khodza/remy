@@ -4,7 +4,13 @@ import { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
 import { Domain } from '@common/tokens';
 import { computeLatestOccurrence } from '@common/recurrence';
+import { addMinutes } from 'date-fns';
 import { SendPendingRemindersOutput } from './types';
+
+/** How long to hold a task after a transient send failure. */
+const RETRY_DELAY_MINUTES = 2;
+/** Safety valve so one run can't loop forever if claims never stop. */
+const MAX_SENDS_PER_RUN = 500;
 
 @Injectable()
 export class SendPendingRemindersUsecase {
@@ -23,59 +29,64 @@ export class SendPendingRemindersUsecase {
     // Before sending, so a rolled-over task is reminded in this same run
     await this.rollOverMissedOccurrences(now);
 
-    try {
-      // Find all pending tasks that should be reminded
-      const tasks = await this.taskRepository.findPendingReminders(now);
-
-      // Send reminder for each task
-      for (const task of tasks) {
-        try {
-          await this.notificationGateway.sendReminder({
-            chatId: task.telegramChatId,
-            taskId: task.id,
-            description: task.description,
-            scheduledAt: task.scheduledAt,
-            recurrence: task.recurrence ?? null,
-          });
-
-          // Mark reminder as sent so this occurrence isn't sent again
-          await this.taskRepository.update({
-            id: task.id,
-            lastSentAt: now,
-          });
-
-          sentCount++;
-        } catch (error) {
-          console.error(`Failed to send reminder for task ${task.id}:`, error);
-          failedCount++;
-
-          // Retrying can't succeed (e.g. the user blocked the bot), so give
-          // up on this occurrence instead of failing again every minute.
-          if (error instanceof NotificationFailedError && error.permanent) {
-            await this.taskRepository
-              .update({ id: task.id, lastSentAt: now })
-              .catch((updateError: unknown) => {
-                console.error(
-                  `Failed to mark task ${task.id} as sent:`,
-                  updateError,
-                );
-              });
-          }
-        }
+    for (let i = 0; i < MAX_SENDS_PER_RUN; i++) {
+      let claimed;
+      try {
+        // Claim first, send second: a crash between the two loses at most
+        // one reminder instead of duplicating it, and a second process
+        // can never send the same task.
+        claimed = await this.taskRepository.claimDueReminder(now);
+      } catch (error) {
+        console.error('Failed to claim a due reminder:', error);
+        break;
       }
+      if (!claimed) break;
 
-      return { sentCount, failedCount };
-    } catch (error) {
-      console.error('Failed to fetch pending reminders:', error);
-      return { sentCount, failedCount };
+      const { task, previousLastSentAt } = claimed;
+      try {
+        await this.notificationGateway.sendReminder({
+          chatId: task.telegramChatId,
+          taskId: task.id,
+          description: task.description,
+          scheduledAt: task.nextFireAt,
+          timezone: task.timezone,
+          recurrence: task.recurrence ?? null,
+        });
+        sentCount++;
+      } catch (error) {
+        console.error(`Failed to send reminder for task ${task.id}:`, error);
+        failedCount++;
+
+        // Permanent failures (blocked bot, chat gone) keep the claim so we
+        // don't retry every minute. Transient ones release it with a short
+        // hold so the next run tries again.
+        if (error instanceof NotificationFailedError && error.permanent) {
+          continue;
+        }
+        await this.taskRepository
+          .releaseReminderClaim(
+            task.id,
+            previousLastSentAt,
+            addMinutes(now, RETRY_DELAY_MINUTES),
+          )
+          .catch((releaseError: unknown) => {
+            console.error(
+              `Failed to release claim on task ${task.id}:`,
+              releaseError,
+            );
+          });
+      }
     }
+
+    return { sentCount, failedCount };
   }
 
   /**
    * A recurring task only advances when the user completes it. If they
    * ignore it, move it onto its latest occurrence once the next cycle has
    * arrived; otherwise it would stay on the missed cycle (already reminded)
-   * and never remind again.
+   * and never remind again. A snooze that belonged to the missed occurrence
+   * is dropped with it.
    */
   private async rollOverMissedOccurrences(now: Date): Promise<void> {
     try {
@@ -86,11 +97,16 @@ export class SendPendingRemindersUsecase {
           task.scheduledAt,
           task.recurrence,
           now,
+          task.timezone,
         );
         if (latest.getTime() === task.scheduledAt.getTime()) continue;
 
         try {
-          await this.taskRepository.update({ id: task.id, scheduledAt: latest });
+          await this.taskRepository.update({
+            id: task.id,
+            scheduledAt: latest,
+            snoozedUntil: null,
+          });
         } catch (error) {
           console.error(`Failed to roll over task ${task.id}:`, error);
         }

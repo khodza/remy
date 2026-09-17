@@ -4,5 +4,6 @@ export type {
   UpdateTaskParams,
   Recurrence,
   RecurrenceType,
+  ClaimedReminder,
 } from '../types';
 export { TaskStatus } from '../types';

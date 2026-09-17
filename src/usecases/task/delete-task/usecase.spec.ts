@@ -3,6 +3,8 @@ import type { TaskRepository } from '@domain/task/repository';
 import { TaskStatus } from '@domain/task';
 import { FailedToUpdateTaskError } from '@domain/task/errors';
 
+import { makeTask, mockTaskRepository } from '@test/factories';
+
 describe('DeleteTaskUsecase', () => {
   let usecase: DeleteTaskUsecase;
   let taskRepository: jest.Mocked<TaskRepository>;
@@ -10,30 +12,15 @@ describe('DeleteTaskUsecase', () => {
   const now = new Date('2026-04-16T12:00:00Z');
 
   beforeEach(() => {
-    taskRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findPendingReminders: jest.fn(),
-      findOverdueRecurring: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    };
+    taskRepository = mockTaskRepository();
 
     usecase = new DeleteTaskUsecase(taskRepository);
   });
 
   it('should soft-delete a task by setting status to Deleted', async () => {
-    taskRepository.update.mockResolvedValue({
-      id: 'task-1',
-      userId: 'user-1',
-      telegramChatId: 12345,
-      description: 'Buy groceries',
-      scheduledAt: now,
-      status: TaskStatus.Deleted,
-      createdAt: now,
-      updatedAt: now,
-    });
+    taskRepository.update.mockResolvedValue(
+      makeTask({ scheduledAt: now, status: TaskStatus.Deleted }),
+    );
 
     const result = await usecase.execute({ taskId: 'task-1' });
 

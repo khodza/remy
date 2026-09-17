@@ -35,7 +35,8 @@
       "@domain/*": ["src/domain/*"],
       "@infra/*": ["src/infrastructure/*"],
       "@usecases/*": ["src/usecases/*"],
-      "@common/*": ["src/common/*"]
+      "@common/*": ["src/common/*"],
+      "@test/*": ["test/*"]
     },
     "isolatedModules": false,
     "forceConsistentCasingInFileNames": true,

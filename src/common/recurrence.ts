@@ -1,22 +1,38 @@
-import { addDays, addMonths, addWeeks, getDay } from 'date-fns';
+import {
+  addDays,
+  addMonths,
+  addWeeks,
+  getDate,
+  getDay,
+  getDaysInMonth,
+  setDate,
+  startOfMonth,
+} from 'date-fns';
+import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 import { Recurrence } from '@domain/task';
 
 /**
- * Given a task's current scheduledAt + recurrence, return the next occurrence
- * strictly after `now`. If the task has been missed for many cycles we advance
- * until future — otherwise a recurring reminder that fell behind would stay
- * forever overdue and keep firing reminders.
+ * Recurrence arithmetic happens on the wall clock of the task's timezone,
+ * not on absolute instants: "daily at 09:00" must stay at 09:00 across a
+ * DST switch, and "monthly on the 31st" must return to the 31st after a
+ * short month (which is what `anchorAt` is for).
+ */
+
+/**
+ * Next occurrence strictly after `now`. If the task fell behind by many
+ * cycles we advance until future — otherwise a recurring reminder that fell
+ * behind would stay forever overdue and keep firing reminders.
  */
 export function computeNextOccurrence(
   current: Date,
   recurrence: Recurrence,
   now: Date = new Date(),
+  timezone = 'UTC',
 ): Date {
-  let next = advanceOnce(current, recurrence);
-  // Guard: advance until strictly after `now`.
+  let next = advanceOnce(current, recurrence, timezone);
   // Cap the iteration count so a bad config can't hang the server.
   for (let i = 0; i < 1000 && next.getTime() <= now.getTime(); i++) {
-    next = advanceOnce(next, recurrence);
+    next = advanceOnce(next, recurrence, timezone);
   }
   return next;
 }
@@ -31,12 +47,11 @@ export function computeLatestOccurrence(
   current: Date,
   recurrence: Recurrence,
   now: Date = new Date(),
+  timezone = 'UTC',
 ): Date {
   let latest = current;
-  // Same iteration cap as computeNextOccurrence; a task further behind
-  // simply catches up over the following calls.
   for (let i = 0; i < 1000; i++) {
-    const next = advanceOnce(latest, recurrence);
+    const next = advanceOnce(latest, recurrence, timezone);
     if (next.getTime() > now.getTime()) break;
     latest = next;
   }
@@ -67,19 +82,31 @@ export function describeRecurrence(
   }
 }
 
-function advanceOnce(current: Date, recurrence: Recurrence): Date {
+function advanceOnce(
+  current: Date,
+  recurrence: Recurrence,
+  timezone: string,
+): Date {
+  // `zoned` carries the task's wall-clock fields in the process's local
+  // time so date-fns' calendar arithmetic (which preserves local h:m:s)
+  // operates on the user's calendar day, not the UTC one.
+  const zoned = toZonedTime(current, timezone);
+  const back = (d: Date): Date => fromZonedTime(d, timezone);
+
   switch (recurrence.type) {
     case 'daily':
-      return addDays(current, 1);
+      return back(addDays(zoned, 1));
     case 'weekdays':
-      return nextWeekday(current);
+      return back(nextWeekday(zoned));
     case 'weekly':
-      return addWeeks(current, 1);
+      return back(addWeeks(zoned, 1));
     case 'monthly':
-      return addMonths(current, 1);
+      return back(
+        nextMonth(zoned, anchorDayOfMonth(recurrence, zoned, timezone)),
+      );
     case 'every_n_days': {
       const interval = Math.max(1, Math.floor(recurrence.intervalDays ?? 1));
-      return addDays(current, interval);
+      return back(addDays(zoned, interval));
     }
   }
 }
@@ -94,4 +121,31 @@ function nextWeekday(current: Date): Date {
     if (day !== 0 && day !== 6) return candidate; // not Sun (0) or Sat (6)
     candidate = addDays(candidate, 1);
   }
+}
+
+/**
+ * Same wall-clock time on `anchorDay` of the next month, clamped to that
+ * month's length (31st → Feb 28th → Mar 31st, not Mar 28th).
+ */
+function nextMonth(current: Date, anchorDay: number): Date {
+  const firstOfNext = addMonths(startOfMonth(current), 1);
+  const day = Math.min(anchorDay, getDaysInMonth(firstOfNext));
+  const dated = setDate(firstOfNext, day);
+  dated.setHours(
+    current.getHours(),
+    current.getMinutes(),
+    current.getSeconds(),
+    current.getMilliseconds(),
+  );
+  return dated;
+}
+
+function anchorDayOfMonth(
+  recurrence: Recurrence,
+  fallback: Date,
+  timezone: string,
+): number {
+  if (recurrence.anchorAt)
+    return getDate(toZonedTime(recurrence.anchorAt, timezone));
+  return getDate(fallback);
 }

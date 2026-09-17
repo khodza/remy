@@ -2,8 +2,8 @@ import { SendPendingRemindersUsecase } from './usecase';
 import type { TaskRepository } from '@domain/task/repository';
 import type { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
-import { TaskStatus } from '@domain/task';
 import type { Task } from '@domain/task';
+import { makeTask, mockTaskRepository } from '@test/factories';
 
 describe('SendPendingRemindersUsecase', () => {
   let usecase: SendPendingRemindersUsecase;
@@ -12,35 +12,22 @@ describe('SendPendingRemindersUsecase', () => {
 
   const now = new Date('2026-04-16T12:00:00Z');
 
-  const makeTask = (id: string): Task => ({
-    id,
-    userId: 'user-1',
-    telegramChatId: 12345,
-    description: `Task ${id}`,
-    scheduledAt: new Date('2026-04-16T11:00:00Z'),
-    status: TaskStatus.Pending,
-    createdAt: now,
-    updatedAt: now,
-  });
+  /** Makes claimDueReminder hand out these tasks one per call, then null. */
+  function queueClaims(tasks: Task[], previousLastSentAt?: Date) {
+    const queue = [...tasks];
+    taskRepository.claimDueReminder.mockImplementation(async () => {
+      const task = queue.shift();
+      return task
+        ? { task: { ...task, lastSentAt: now }, previousLastSentAt }
+        : null;
+    });
+  }
 
   beforeEach(() => {
     jest.useFakeTimers({ now });
     jest.spyOn(console, 'error').mockImplementation(() => {});
-
-    taskRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findPendingReminders: jest.fn(),
-      findOverdueRecurring: jest.fn().mockResolvedValue([]),
-      update: jest.fn(),
-      delete: jest.fn(),
-    };
-
-    notificationGateway = {
-      sendReminder: jest.fn(),
-    };
-
+    taskRepository = mockTaskRepository();
+    notificationGateway = { sendReminder: jest.fn() };
     usecase = new SendPendingRemindersUsecase(
       taskRepository,
       notificationGateway,
@@ -52,74 +39,72 @@ describe('SendPendingRemindersUsecase', () => {
     jest.restoreAllMocks();
   });
 
-  it('should send reminders for all pending tasks', async () => {
-    const tasks = [makeTask('task-1'), makeTask('task-2')];
-    taskRepository.findPendingReminders.mockResolvedValue(tasks);
-    taskRepository.update.mockResolvedValue(tasks[0]!);
+  it('sends every claimed task and passes its timezone and fire time', async () => {
+    const snoozed = makeTask({
+      id: 'task-2',
+      timezone: 'Asia/Tashkent',
+      scheduledAt: new Date('2026-04-16T09:00:00Z'),
+      snoozedUntil: new Date('2026-04-16T11:30:00Z'),
+      recurrence: { type: 'daily' },
+    });
+    queueClaims([makeTask({ id: 'task-1' }), snoozed]);
 
     const result = await usecase.execute();
 
     expect(notificationGateway.sendReminder).toHaveBeenCalledTimes(2);
-    expect(taskRepository.update).toHaveBeenCalledTimes(2);
-    expect(result.sentCount).toBe(2);
-    expect(result.failedCount).toBe(0);
+    expect(notificationGateway.sendReminder).toHaveBeenLastCalledWith({
+      chatId: 12345,
+      taskId: 'task-2',
+      description: 'Buy groceries',
+      scheduledAt: new Date('2026-04-16T11:30:00Z'),
+      timezone: 'Asia/Tashkent',
+      recurrence: { type: 'daily' },
+    });
+    expect(result).toEqual({ sentCount: 2, failedCount: 0 });
+    // The claim already stamped lastSentAt; no second write per task.
+    expect(taskRepository.update).not.toHaveBeenCalled();
   });
 
-  it('should count failed reminders without stopping', async () => {
-    const tasks = [makeTask('task-1'), makeTask('task-2'), makeTask('task-3')];
-    taskRepository.findPendingReminders.mockResolvedValue(tasks);
+  it('claims before sending, so a crash can never duplicate a reminder', async () => {
+    queueClaims([makeTask()]);
+    await usecase.execute();
+    expect(
+      taskRepository.claimDueReminder.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      notificationGateway.sendReminder.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('counts failed reminders without stopping', async () => {
+    queueClaims([
+      makeTask({ id: 'a' }),
+      makeTask({ id: 'b' }),
+      makeTask({ id: 'c' }),
+    ]);
     notificationGateway.sendReminder
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('send failed'))
       .mockResolvedValueOnce(undefined);
-    taskRepository.update.mockResolvedValue(tasks[0]!);
 
     const result = await usecase.execute();
 
-    expect(result.sentCount).toBe(2);
-    expect(result.failedCount).toBe(1);
+    expect(result).toEqual({ sentCount: 2, failedCount: 1 });
   });
 
-  it('should return zeros when no pending tasks exist', async () => {
-    taskRepository.findPendingReminders.mockResolvedValue([]);
-
+  it('returns zeros when nothing is due', async () => {
     const result = await usecase.execute();
-
-    expect(result.sentCount).toBe(0);
-    expect(result.failedCount).toBe(0);
+    expect(result).toEqual({ sentCount: 0, failedCount: 0 });
     expect(notificationGateway.sendReminder).not.toHaveBeenCalled();
   });
 
-  it('should handle fetch error gracefully', async () => {
-    taskRepository.findPendingReminders.mockRejectedValue(
-      new Error('db error'),
-    );
-
+  it('stops the run when claiming fails', async () => {
+    taskRepository.claimDueReminder.mockRejectedValue(new Error('db error'));
     const result = await usecase.execute();
-
-    expect(result.sentCount).toBe(0);
-    expect(result.failedCount).toBe(0);
+    expect(result).toEqual({ sentCount: 0, failedCount: 0 });
   });
 
-  it('should update lastSentAt after successful send', async () => {
-    const task = makeTask('task-1');
-    taskRepository.findPendingReminders.mockResolvedValue([task]);
-    taskRepository.update.mockResolvedValue(task);
-
-    await usecase.execute();
-
-    expect(taskRepository.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'task-1',
-        lastSentAt: expect.any(Date) as Date,
-      }),
-    );
-  });
-
-  it('should stop retrying a reminder that failed permanently', async () => {
-    const task = makeTask('task-1');
-    taskRepository.findPendingReminders.mockResolvedValue([task]);
-    taskRepository.update.mockResolvedValue(task);
+  it('keeps the claim after a permanent failure so it is not retried every minute', async () => {
+    queueClaims([makeTask()]);
     notificationGateway.sendReminder.mockRejectedValue(
       new NotificationFailedError('bot was blocked', undefined, {
         permanent: true,
@@ -129,15 +114,12 @@ describe('SendPendingRemindersUsecase', () => {
     const result = await usecase.execute();
 
     expect(result.failedCount).toBe(1);
-    expect(taskRepository.update).toHaveBeenCalledWith({
-      id: 'task-1',
-      lastSentAt: now,
-    });
+    expect(taskRepository.releaseReminderClaim).not.toHaveBeenCalled();
   });
 
-  it('should leave transient failures to be retried on the next run', async () => {
-    const task = makeTask('task-1');
-    taskRepository.findPendingReminders.mockResolvedValue([task]);
+  it('releases the claim with a retry hold after a transient failure', async () => {
+    const previous = new Date('2026-04-15T12:00:00Z');
+    queueClaims([makeTask()], previous);
     notificationGateway.sendReminder.mockRejectedValue(
       new NotificationFailedError('too many requests'),
     );
@@ -145,38 +127,59 @@ describe('SendPendingRemindersUsecase', () => {
     const result = await usecase.execute();
 
     expect(result.failedCount).toBe(1);
-    expect(taskRepository.update).not.toHaveBeenCalled();
+    expect(taskRepository.releaseReminderClaim).toHaveBeenCalledWith(
+      'task-1',
+      previous,
+      new Date('2026-04-16T12:02:00Z'),
+    );
   });
 
-  it('should roll an ignored recurring task onto its latest occurrence before sending', async () => {
-    const task: Task = {
-      ...makeTask('task-1'),
+  it('rolls an ignored recurring task onto its latest occurrence before sending', async () => {
+    const task = makeTask({
       scheduledAt: new Date('2026-04-13T09:00:00Z'),
+      snoozedUntil: new Date('2026-04-13T10:00:00Z'),
       recurrence: { type: 'daily' },
-      lastSentAt: new Date('2026-04-13T09:00:00Z'),
-    };
+      lastSentAt: new Date('2026-04-13T10:00:00Z'),
+    });
     taskRepository.findOverdueRecurring.mockResolvedValue([task]);
-    taskRepository.findPendingReminders.mockResolvedValue([]);
 
     await usecase.execute();
 
     expect(taskRepository.update).toHaveBeenCalledWith({
       id: 'task-1',
       scheduledAt: new Date('2026-04-16T09:00:00Z'),
+      snoozedUntil: null,
     });
     expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
-      taskRepository.findPendingReminders.mock.invocationCallOrder[0]!,
+      taskRepository.claimDueReminder.mock.invocationCallOrder[0]!,
     );
   });
 
-  it('should not roll a recurring task whose next occurrence is still ahead', async () => {
-    const task: Task = {
-      ...makeTask('task-1'),
-      scheduledAt: new Date('2026-04-16T09:00:00Z'),
+  it('rolls over in the task timezone', async () => {
+    // Tashkent (UTC+5): 09:00 local = 04:00Z. Three days behind.
+    const task = makeTask({
+      scheduledAt: new Date('2026-04-13T04:00:00Z'),
+      timezone: 'Asia/Tashkent',
       recurrence: { type: 'daily' },
-    };
+    });
     taskRepository.findOverdueRecurring.mockResolvedValue([task]);
-    taskRepository.findPendingReminders.mockResolvedValue([]);
+
+    await usecase.execute();
+
+    expect(taskRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduledAt: new Date('2026-04-16T04:00:00Z'),
+      }),
+    );
+  });
+
+  it('does not roll a recurring task whose next occurrence is still ahead', async () => {
+    taskRepository.findOverdueRecurring.mockResolvedValue([
+      makeTask({
+        scheduledAt: new Date('2026-04-16T09:00:00Z'),
+        recurrence: { type: 'daily' },
+      }),
+    ]);
 
     await usecase.execute();
 

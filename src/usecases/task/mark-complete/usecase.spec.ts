@@ -1,48 +1,33 @@
 import { MarkCompleteUsecase } from './usecase';
 import type { TaskRepository } from '@domain/task/repository';
 import { TaskStatus } from '@domain/task';
-import type { Task } from '@domain/task';
 import {
   FailedToUpdateTaskError,
   TaskNotFoundError,
 } from '@domain/task/errors';
+import { makeTask, mockTaskRepository } from '@test/factories';
 
 describe('MarkCompleteUsecase', () => {
   let usecase: MarkCompleteUsecase;
   let taskRepository: jest.Mocked<TaskRepository>;
 
-  const now = new Date('2026-04-16T12:00:00Z');
-
-  const baseTask: Task = {
-    id: 'task-1',
-    userId: 'user-1',
-    telegramChatId: 12345,
-    description: 'Buy groceries',
-    scheduledAt: now,
-    status: TaskStatus.Pending,
-    recurrence: null,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const now = new Date('2026-04-16T10:00:00Z');
 
   beforeEach(() => {
-    taskRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findPendingReminders: jest.fn(),
-      findOverdueRecurring: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    };
-
+    taskRepository = mockTaskRepository();
     usecase = new MarkCompleteUsecase(taskRepository);
+    jest.useFakeTimers({ now });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('marks a one-shot task as completed', async () => {
-    taskRepository.findById.mockResolvedValue(baseTask);
+    const task = makeTask();
+    taskRepository.findById.mockResolvedValue(task);
     taskRepository.update.mockResolvedValue({
-      ...baseTask,
+      ...task,
       status: TaskStatus.Completed,
     });
 
@@ -53,58 +38,95 @@ describe('MarkCompleteUsecase', () => {
       status: TaskStatus.Completed,
     });
     expect(result.status).toBe(TaskStatus.Completed);
+    expect(result.alreadyDone).toBe(false);
   });
 
-  it('advances scheduledAt by 1 day for a daily recurring task', async () => {
-    const dailyTask: Task = {
-      ...baseTask,
+  it('is a no-op on an already completed one-shot task', async () => {
+    taskRepository.findById.mockResolvedValue(
+      makeTask({ status: TaskStatus.Completed }),
+    );
+    const result = await usecase.execute({ taskId: 'task-1' });
+    expect(result.alreadyDone).toBe(true);
+    expect(taskRepository.update).not.toHaveBeenCalled();
+  });
+
+  it('advances a daily task by one day and clears its snooze', async () => {
+    const daily = makeTask({
       scheduledAt: new Date('2026-04-16T09:00:00Z'),
+      snoozedUntil: new Date('2026-04-16T09:45:00Z'),
       recurrence: { type: 'daily' },
-    };
-    taskRepository.findById.mockResolvedValue(dailyTask);
-    taskRepository.update.mockImplementation(async ({ scheduledAt }) => ({
-      ...dailyTask,
-      scheduledAt: scheduledAt ?? dailyTask.scheduledAt,
-    }));
+    });
+    taskRepository.findById.mockResolvedValue(daily);
+    taskRepository.update.mockImplementation(async ({ scheduledAt }) =>
+      makeTask({ ...daily, scheduledAt: scheduledAt ?? daily.scheduledAt }),
+    );
 
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date('2026-04-16T10:00:00Z'));
-
-    await usecase.execute({ taskId: 'task-1' });
+    const result = await usecase.execute({ taskId: 'task-1' });
 
     expect(taskRepository.update).toHaveBeenCalledWith({
       id: 'task-1',
       scheduledAt: new Date('2026-04-17T09:00:00Z'),
+      snoozedUntil: null,
       status: TaskStatus.Pending,
     });
+    expect(result.alreadyDone).toBe(false);
+  });
 
-    jest.useRealTimers();
+  it('advances in the task timezone, keeping the wall-clock time across DST', async () => {
+    // Berlin switches to summer time on 2026-03-29: 09:00 CET is 08:00Z,
+    // 09:00 CEST is 07:00Z.
+    const berlinDaily = makeTask({
+      scheduledAt: new Date('2026-03-28T08:00:00Z'),
+      timezone: 'Europe/Berlin',
+      recurrence: { type: 'daily' },
+    });
+    jest.setSystemTime(new Date('2026-03-28T09:00:00Z'));
+    taskRepository.findById.mockResolvedValue(berlinDaily);
+    taskRepository.update.mockImplementation(async ({ scheduledAt }) =>
+      makeTask({
+        ...berlinDaily,
+        scheduledAt: scheduledAt ?? berlinDaily.scheduledAt,
+      }),
+    );
+
+    await usecase.execute({ taskId: 'task-1' });
+
+    expect(taskRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduledAt: new Date('2026-03-29T07:00:00Z'),
+      }),
+    );
+  });
+
+  it('is idempotent: a recurring task already in the future is not advanced again', async () => {
+    const advanced = makeTask({
+      scheduledAt: new Date('2026-04-17T09:00:00Z'), // tomorrow, relative to now
+      recurrence: { type: 'daily' },
+    });
+    taskRepository.findById.mockResolvedValue(advanced);
+
+    const result = await usecase.execute({ taskId: 'task-1' });
+
+    expect(result.alreadyDone).toBe(true);
+    expect(result.scheduledAt).toEqual(advanced.scheduledAt);
+    expect(taskRepository.update).not.toHaveBeenCalled();
   });
 
   it('advances past missed cycles so the next fire is in the future', async () => {
-    const weeklyTask: Task = {
-      ...baseTask,
-      scheduledAt: new Date('2026-04-01T09:00:00Z'), // three weeks ago relative to "now"
+    const weekly = makeTask({
+      scheduledAt: new Date('2026-04-01T09:00:00Z'),
       recurrence: { type: 'weekly' },
-    };
-    taskRepository.findById.mockResolvedValue(weeklyTask);
-    taskRepository.update.mockImplementation(async ({ scheduledAt }) => ({
-      ...weeklyTask,
-      scheduledAt: scheduledAt ?? weeklyTask.scheduledAt,
-    }));
-
-    jest.useFakeTimers();
+    });
     jest.setSystemTime(new Date('2026-04-22T10:00:00Z'));
+    taskRepository.findById.mockResolvedValue(weekly);
+    taskRepository.update.mockImplementation(async ({ scheduledAt }) =>
+      makeTask({ ...weekly, scheduledAt: scheduledAt ?? weekly.scheduledAt }),
+    );
 
     await usecase.execute({ taskId: 'task-1' });
 
     const called = taskRepository.update.mock.calls[0]?.[0];
-    expect(called?.scheduledAt).toBeDefined();
-    expect(called?.scheduledAt!.getTime()).toBeGreaterThan(
-      new Date('2026-04-22T10:00:00Z').getTime(),
-    );
-
-    jest.useRealTimers();
+    expect(called?.scheduledAt).toEqual(new Date('2026-04-29T09:00:00Z'));
   });
 
   it('throws TaskNotFoundError when the task does not exist', async () => {
@@ -115,9 +137,8 @@ describe('MarkCompleteUsecase', () => {
   });
 
   it('wraps unexpected errors in FailedToUpdateTaskError', async () => {
-    taskRepository.findById.mockResolvedValue(baseTask);
+    taskRepository.findById.mockResolvedValue(makeTask());
     taskRepository.update.mockRejectedValue(new Error('db error'));
-
     await expect(usecase.execute({ taskId: 'task-1' })).rejects.toBeInstanceOf(
       FailedToUpdateTaskError,
     );

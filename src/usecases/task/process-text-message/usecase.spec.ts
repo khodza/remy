@@ -1,40 +1,23 @@
 import { ProcessTextMessageUsecase } from './usecase';
 import type { TaskRepository } from '@domain/task/repository';
 import type { TaskParserGateway } from '@domain/ai/gateway/task-parser';
-import { TaskStatus } from '@domain/task';
 import { InvalidInputError } from '@common/errors';
 import { FailedToCreateTaskError } from '@domain/task/errors';
 import { ParsingFailedError } from '@domain/ai/errors';
+
+import { makeTask, mockTaskRepository } from '@test/factories';
 
 describe('ProcessTextMessageUsecase', () => {
   let usecase: ProcessTextMessageUsecase;
   let taskRepository: jest.Mocked<TaskRepository>;
   let taskParserGateway: jest.Mocked<TaskParserGateway>;
 
-  const now = new Date('2026-04-16T12:00:00Z');
   const scheduledAt = new Date('2026-04-16T15:00:00Z');
 
-  const mockTask = {
-    id: 'task-1',
-    userId: 'user-1',
-    telegramChatId: 12345,
-    description: 'Buy groceries',
-    scheduledAt,
-    status: TaskStatus.Pending,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const mockTask = makeTask({ scheduledAt });
 
   beforeEach(() => {
-    taskRepository = {
-      create: jest.fn(),
-      findById: jest.fn(),
-      findByUserId: jest.fn(),
-      findPendingReminders: jest.fn(),
-      findOverdueRecurring: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    };
+    taskRepository = mockTaskRepository();
 
     taskParserGateway = {
       parse: jest.fn(),
@@ -67,14 +50,46 @@ describe('ProcessTextMessageUsecase', () => {
       telegramChatId: 12345,
       description: 'Buy groceries',
       scheduledAt,
+      timezone: 'UTC',
       recurrence: null,
     });
     expect(result).toEqual({
       taskId: 'task-1',
       description: 'Buy groceries',
       scheduledAt,
+      timezone: 'UTC',
       recurrence: null,
     });
+  });
+
+  it('stores the user timezone and anchors a recurrence at the first occurrence', async () => {
+    taskParserGateway.parse.mockResolvedValue({
+      description: 'Take vitamins',
+      scheduledAt,
+      recurrence: { type: 'daily' },
+    });
+    taskRepository.create.mockResolvedValue(
+      makeTask({
+        scheduledAt,
+        timezone: 'Asia/Tashkent',
+        recurrence: { type: 'daily', anchorAt: scheduledAt },
+      }),
+    );
+
+    const result = await usecase.execute({
+      userId: 'user-1',
+      telegramChatId: 12345,
+      text: 'take vitamins every day at 9',
+      userTimezone: 'Asia/Tashkent',
+    });
+
+    expect(taskRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timezone: 'Asia/Tashkent',
+        recurrence: { type: 'daily', anchorAt: scheduledAt },
+      }),
+    );
+    expect(result.timezone).toBe('Asia/Tashkent');
   });
 
   it('should throw InvalidInputError for empty text', async () => {

@@ -11,5 +11,6 @@ export type ProcessTextMessageOutput = {
   taskId: string;
   description: string;
   scheduledAt: Date;
+  timezone: string;
   recurrence: Recurrence | null;
 };

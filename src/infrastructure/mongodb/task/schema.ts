@@ -9,6 +9,7 @@ const RecurrenceSchema = new Schema(
       required: true,
     },
     intervalDays: { type: Number, required: false, min: 1 },
+    anchorAt: { type: Date, required: false },
   },
   { _id: false },
 );
@@ -19,6 +20,10 @@ export const TaskSchema = new Schema<TaskDocument>(
     telegram_chat_id: { type: Number, required: true },
     description: { type: String, required: true },
     scheduled_at: { type: Date, required: true, index: true },
+    timezone: { type: String, required: false },
+    snoozed_until: { type: Date, required: false, default: null },
+    next_fire_at: { type: Date, required: false },
+    next_attempt_at: { type: Date, required: false, default: null },
     status: {
       type: String,
       required: true,
@@ -26,7 +31,7 @@ export const TaskSchema = new Schema<TaskDocument>(
       index: true,
     },
     recurrence: { type: RecurrenceSchema, required: false, default: null },
-    last_sent_at: { type: Date, required: false }, // Track when reminder was last sent
+    last_sent_at: { type: Date, required: false, default: null },
   },
   {
     versionKey: false,
@@ -35,5 +40,7 @@ export const TaskSchema = new Schema<TaskDocument>(
   },
 );
 
-// Compound index for efficient reminder queries
+// The scheduler's claim query.
+TaskSchema.index({ status: 1, next_fire_at: 1 });
+// Legacy; still used by findOverdueRecurring.
 TaskSchema.index({ status: 1, scheduled_at: 1 });
