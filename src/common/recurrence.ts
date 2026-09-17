@@ -43,6 +43,30 @@ export function computeLatestOccurrence(
   return latest;
 }
 
+/**
+ * Human-readable label for a recurrence, e.g. "every weekday". Returns null
+ * for one-shot tasks so callers can skip the line entirely.
+ */
+export function describeRecurrence(
+  recurrence: Recurrence | null | undefined,
+): string | null {
+  if (!recurrence) return null;
+  switch (recurrence.type) {
+    case 'daily':
+      return 'every day';
+    case 'weekdays':
+      return 'every weekday';
+    case 'weekly':
+      return 'every week';
+    case 'monthly':
+      return 'every month';
+    case 'every_n_days': {
+      const n = Math.max(1, Math.floor(recurrence.intervalDays ?? 1));
+      return n === 1 ? 'every day' : `every ${n} days`;
+    }
+  }
+}
+
 function advanceOnce(current: Date, recurrence: Recurrence): Date {
   switch (recurrence.type) {
     case 'daily':

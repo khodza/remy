@@ -6,6 +6,7 @@ import { NotificationFailedError } from '@domain/notification/errors';
 import { TelegramBotService } from '../bot.service';
 import { escapeHtml } from '../html';
 import { format } from 'date-fns';
+import { describeRecurrence } from '@common/recurrence';
 
 @Injectable()
 export class NotificationGatewayImpl implements NotificationGateway {
@@ -15,15 +16,18 @@ export class NotificationGatewayImpl implements NotificationGateway {
     const bot = this.botService.getBot();
 
     const keyboard = new InlineKeyboard()
-      .text('✅ Complete', `complete:${input.taskId}`)
+      .text('✅ Done', `complete:${input.taskId}`)
       .text('⏰ +15min', `delay:${input.taskId}:15`)
       .row()
       .text('⏰ +1hr', `delay:${input.taskId}:60`);
 
+    const repeat = describeRecurrence(input.recurrence);
+    const repeatLine = repeat ? `\n🔁 Repeats ${repeat}` : '';
+
     try {
       await bot.api.sendMessage(
         input.chatId,
-        `🔔 <b>Reminder!</b>\n\n📝 ${escapeHtml(input.description)}\n⏰ Scheduled: ${format(input.scheduledAt, 'PPpp')}`,
+        `🔔 <b>Reminder!</b>\n\n📝 ${escapeHtml(input.description)}\n⏰ Scheduled: ${format(input.scheduledAt, 'PPpp')}${repeatLine}`,
         { reply_markup: keyboard, parse_mode: 'HTML' },
       );
     } catch (error) {

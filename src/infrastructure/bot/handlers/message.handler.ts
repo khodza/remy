@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Context } from 'grammy';
+import type { Recurrence } from '@domain/task';
 import {
   ProcessTextMessageUsecase,
   type ProcessTextMessageOutput,
@@ -11,6 +12,7 @@ import {
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { format } from 'date-fns';
 import { escapeHtml } from '../html';
+import { describeRecurrence } from '@common/recurrence';
 
 @Injectable()
 export class MessageHandler {
@@ -55,7 +57,7 @@ export class MessageHandler {
     // Kept outside the try: the task is already saved, so a failed
     // confirmation must not tell the user to retry (that duplicates it).
     await ctx.reply(
-      `✅ <b>Task created!</b>\n\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}`,
+      `✅ <b>Task created!</b>\n\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}${recurrenceLine(result.recurrence)}`,
       { parse_mode: 'HTML' },
     );
   }
@@ -105,8 +107,13 @@ export class MessageHandler {
     }
 
     await ctx.reply(
-      `✅ <b>Task created from voice!</b>\n\n🎤 Transcribed: "${escapeHtml(result.transcribedText)}"\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}`,
+      `✅ <b>Task created from voice!</b>\n\n🎤 Transcribed: "${escapeHtml(result.transcribedText)}"\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}${recurrenceLine(result.recurrence)}`,
       { parse_mode: 'HTML' },
     );
   }
+}
+
+function recurrenceLine(recurrence: Recurrence | null): string {
+  const label = describeRecurrence(recurrence);
+  return label ? `\n🔁 Repeats ${label}` : '';
 }

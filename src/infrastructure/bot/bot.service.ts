@@ -3,7 +3,7 @@ import { ModuleRef } from '@nestjs/core';
 import { Bot } from 'grammy';
 import { MessageHandler } from './handlers/message.handler';
 import { CallbackHandler } from './handlers/callback.handler';
-import { CommandHandler } from './handlers/command.handler';
+import { BOT_COMMANDS, CommandHandler } from './handlers/command.handler';
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
@@ -32,6 +32,13 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // Setup handlers after lazy injection
     this.setupHandlers();
+
+    // Populate Telegram's "/" menu. Non-fatal: the bot works without it.
+    this.bot.api
+      .setMyCommands([...BOT_COMMANDS])
+      .catch((error: unknown) => {
+        console.error('⚠️  Failed to register bot commands:', error);
+      });
 
     // Start bot in background (don't await - it runs a long-polling loop)
     this.bot.start().catch((error) => {

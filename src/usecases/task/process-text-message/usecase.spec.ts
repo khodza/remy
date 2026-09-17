@@ -73,6 +73,7 @@ describe('ProcessTextMessageUsecase', () => {
       taskId: 'task-1',
       description: 'Buy groceries',
       scheduledAt,
+      recurrence: null,
     });
   });
 

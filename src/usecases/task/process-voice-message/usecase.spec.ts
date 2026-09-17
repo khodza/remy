@@ -35,6 +35,7 @@ describe('ProcessVoiceMessageUsecase', () => {
       taskId: 'task-1',
       description: 'Buy groceries',
       scheduledAt,
+      recurrence: null,
     });
 
     const result = await usecase.execute({
@@ -59,6 +60,7 @@ describe('ProcessVoiceMessageUsecase', () => {
       taskId: 'task-1',
       description: 'Buy groceries',
       scheduledAt,
+      recurrence: null,
       transcribedText: 'Buy groceries at 3pm',
     });
   });

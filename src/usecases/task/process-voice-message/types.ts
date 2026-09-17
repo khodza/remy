@@ -6,9 +6,12 @@ export type ProcessVoiceMessageInput = {
   userTimezone?: string;
 };
 
+import type { Recurrence } from '@domain/task';
+
 export type ProcessVoiceMessageOutput = {
   taskId: string;
   description: string;
   scheduledAt: Date;
+  recurrence: Recurrence | null;
   transcribedText: string;
 };

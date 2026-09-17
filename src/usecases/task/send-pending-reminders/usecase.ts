@@ -35,6 +35,7 @@ export class SendPendingRemindersUsecase {
             taskId: task.id,
             description: task.description,
             scheduledAt: task.scheduledAt,
+            recurrence: task.recurrence ?? null,
           });
 
           // Mark reminder as sent so this occurrence isn't sent again

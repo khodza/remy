@@ -91,6 +91,7 @@ describe('TaskController', () => {
         taskId: 'task-1',
         description: 'Buy milk',
         scheduledAt: ownedTask.scheduledAt,
+        recurrence: null,
       });
       taskRepository.findById.mockResolvedValue(ownedTask);
 
@@ -111,6 +112,7 @@ describe('TaskController', () => {
         taskId: 'task-1',
         description: 'Buy milk',
         scheduledAt: ownedTask.scheduledAt,
+        recurrence: null,
       });
       taskRepository.findById.mockResolvedValue(ownedTask);
 

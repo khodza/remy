@@ -4,6 +4,21 @@ import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { ListTasksUsecase } from '@usecases/task/list-tasks';
 import { format } from 'date-fns';
 import { escapeHtml } from '../html';
+import { describeRecurrence } from '@common/recurrence';
+import type { Recurrence } from '@domain/task';
+
+/** Commands shown in Telegram's "/" menu. Keep in sync with /help. */
+export const BOT_COMMANDS = [
+  { command: 'list', description: 'Show your pending reminders' },
+  { command: 'delete', description: 'Delete a reminder' },
+  { command: 'settings', description: 'Set your timezone' },
+  { command: 'help', description: 'How to use Remy' },
+] as const;
+
+function repeatLine(recurrence: Recurrence | null | undefined): string {
+  const label = describeRecurrence(recurrence);
+  return label ? `\n   🔁 ${label}` : '';
+}
 
 @Injectable()
 export class CommandHandler {
@@ -25,17 +40,18 @@ export class CommandHandler {
       });
 
       await ctx.reply(
-        `👋 *Welcome to Remy - Your Task Reminder Bot!*\n\n` +
-          `I'll help you remember important tasks. Just send me a message like:\n` +
+        `👋 <b>Welcome to Remy, your reminder assistant.</b>\n\n` +
+          `Just tell me what to remember and when:\n` +
           `• "Remind me to call mom at 5 PM"\n` +
           `• "Meeting tomorrow at 10am"\n` +
+          `• "Take vitamins every day at 9"\n` +
           `• Voice messages work too!\n\n` +
-          `*Commands:*\n` +
-          `/list - View your tasks\n` +
-          `/delete - Delete a task\n` +
-          `/settings - Configure timezone\n` +
-          `/help - Show this help`,
-        { parse_mode: 'Markdown' },
+          `<b>Commands</b>\n` +
+          `/list – view your reminders\n` +
+          `/delete – delete a reminder\n` +
+          `/settings – set your timezone\n` +
+          `/help – show help`,
+        { parse_mode: 'HTML' },
       );
     } catch (error) {
       console.error('Failed to handle start command:', error);
@@ -77,7 +93,7 @@ export class CommandHandler {
           const emoji = task.isOverdue ? '🔴' : '🟢';
           const status = task.isOverdue ? '(Overdue)' : '';
           message += `${emoji} <b>${escapeHtml(task.description)}</b>\n`;
-          message += `   ⏰ ${format(task.scheduledAt, 'PPpp')} ${status}\n\n`;
+          message += `   ⏰ ${format(task.scheduledAt, 'PPpp')} ${status}${repeatLine(task.recurrence)}\n\n`;
         }
         await ctx.reply(message, { parse_mode: 'HTML' });
       } else {
@@ -88,7 +104,7 @@ export class CommandHandler {
       for (const task of tasksWithButtons) {
         const emoji = task.isOverdue ? '🔴' : '🟢';
         const status = task.isOverdue ? ' (Overdue)' : '';
-        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n⏰ ${format(task.scheduledAt, 'PPpp')}${status}`;
+        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n⏰ ${format(task.scheduledAt, 'PPpp')}${status}${repeatLine(task.recurrence).replace('\n   ', '\n')}`;
 
         const keyboard = new InlineKeyboard()
           .text('✅ Done', `complete:${task.id}`)
@@ -182,23 +198,27 @@ export class CommandHandler {
 
   public async handleHelp(ctx: Context): Promise<void> {
     await ctx.reply(
-      `📚 *Remy Help*\n\n` +
-        `*Creating Tasks:*\n` +
-        `Send me a message describing your task:\n` +
+      `📚 <b>How to use Remy</b>\n\n` +
+        `<b>Create a reminder</b>\n` +
+        `Send a message describing it:\n` +
         `• "Remind me to call mom at 5 PM"\n` +
         `• "Dentist appointment tomorrow at 2pm"\n` +
         `• "Meeting next Monday at 10am"\n` +
-        `• You can also send voice messages!\n\n` +
-        `*Commands:*\n` +
-        `/list - View all your pending tasks\n` +
-        `/delete - Delete a task\n` +
-        `/settings - Set your timezone\n` +
-        `/help - Show this help message\n\n` +
-        `*Reminders:*\n` +
-        `When it's time, I'll send you a reminder with buttons to:\n` +
-        `• ✅ Mark as complete\n` +
-        `• ⏰ Delay by 15 minutes or 1 hour`,
-      { parse_mode: 'Markdown' },
+        `• Voice messages work too\n\n` +
+        `<b>Repeating reminders</b>\n` +
+        `• "Take vitamins every day at 9am"\n` +
+        `• "Standup every weekday at 9:30"\n` +
+        `• "Pay rent every month on the 1st"\n` +
+        `• "Water the plants every 3 days"\n` +
+        `Tapping ✅ Done on a repeating reminder moves it to the next time.\n\n` +
+        `<b>Commands</b>\n` +
+        `/list – all pending reminders\n` +
+        `/delete – delete a reminder\n` +
+        `/settings – set your timezone\n` +
+        `/help – this message\n\n` +
+        `<b>When it's time</b>\n` +
+        `I send the reminder with buttons: ✅ Done, ⏰ +15 min, ⏰ +1 hour.`,
+      { parse_mode: 'HTML' },
     );
   }
 }

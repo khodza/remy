@@ -42,6 +42,7 @@ export class ProcessTextMessageUsecase {
         taskId: task.id,
         description: task.description,
         scheduledAt: task.scheduledAt,
+        recurrence: task.recurrence ?? null,
       };
     } catch (error) {
       if (error instanceof ApplicationError) throw error;

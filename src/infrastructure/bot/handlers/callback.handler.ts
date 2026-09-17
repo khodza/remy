@@ -8,6 +8,8 @@ import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { TaskRepository } from '@domain/task/repository';
 import { Domain } from '@common/tokens';
 import { escapeHtml } from '../html';
+import { describeRecurrence } from '@common/recurrence';
+import { format } from 'date-fns';
 
 @Injectable()
 export class CallbackHandler {
@@ -48,12 +50,25 @@ export class CallbackHandler {
     const isAuthorized = await this.verifyTaskOwnership(ctx, taskId);
     if (!isAuthorized) return;
 
-    await this.markCompleteUsecase.execute({ taskId });
+    const task = await this.markCompleteUsecase.execute({ taskId });
+
+    const repeat = describeRecurrence(task.recurrence);
+    if (repeat) {
+      // Recurring tasks advance instead of completing; tell the user when
+      // the next occurrence is so "Done" doesn't look like it deleted it.
+      await ctx.answerCallbackQuery({ text: '✅ Done for this time!' });
+      await ctx.editMessageText(
+        `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${format(task.scheduledAt, 'PPpp')}`,
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
 
     await ctx.answerCallbackQuery({ text: '✅ Task marked as complete!' });
-    await ctx.editMessageText('✅ *Task completed!*', {
-      parse_mode: 'Markdown',
-    });
+    await ctx.editMessageText(
+      `✅ <b>Task completed!</b>\n\n📝 ${escapeHtml(task.description)}`,
+      { parse_mode: 'HTML' },
+    );
   }
 
   private async handleDelay(ctx: Context, data: string): Promise<void> {
@@ -89,8 +104,8 @@ export class CallbackHandler {
     await this.deleteTaskUsecase.execute({ taskId });
 
     await ctx.answerCallbackQuery({ text: '🗑️ Task deleted!' });
-    await ctx.editMessageText('🗑️ *Task deleted successfully!*', {
-      parse_mode: 'Markdown',
+    await ctx.editMessageText('🗑️ <b>Task deleted.</b>', {
+      parse_mode: 'HTML',
     });
   }
 
