@@ -1,5 +1,5 @@
 import type { ExecutionContext } from '@nestjs/common';
-import { UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
@@ -25,8 +25,31 @@ function makeContext(authHeader: string | undefined): {
 
 describe('JwtAuthGuard', () => {
   const secret = 'test-secret-min-32-bytes-long-abcdef123456';
-  const jwtService = new JwtService({ secret, signOptions: { expiresIn: 900 } });
+  const jwtService = new JwtService({
+    secret,
+    signOptions: { expiresIn: 900 },
+  });
   const guard = new JwtAuthGuard(jwtService);
+
+  afterEach(() => {
+    delete process.env['OWNER_TELEGRAM_ID'];
+  });
+
+  it('rejects a token for a user other than the owner', async () => {
+    process.env['OWNER_TELEGRAM_ID'] = '999';
+    const token = await jwtService.signAsync({ sub: 'user-1', tgId: 42 });
+    const { context } = makeContext(`Bearer ${token}`);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('accepts the owner when the lock is on', async () => {
+    process.env['OWNER_TELEGRAM_ID'] = '42';
+    const token = await jwtService.signAsync({ sub: 'user-1', tgId: 42 });
+    const { context } = makeContext(`Bearer ${token}`);
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
 
   it('accepts a valid Bearer token and populates req.auth', async () => {
     const token = await jwtService.signAsync({ sub: 'user-1', tgId: 42 });

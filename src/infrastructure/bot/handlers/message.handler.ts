@@ -13,6 +13,7 @@ import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { format } from 'date-fns';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
+import { getEnv } from '@common/config';
 
 @Injectable()
 export class MessageHandler {
@@ -72,10 +73,7 @@ export class MessageHandler {
 
       // Download voice file
       const file = await ctx.getFile();
-      const token = process.env['TELEGRAM_BOT_TOKEN'];
-      if (!token) {
-        throw new Error('TELEGRAM_BOT_TOKEN is not defined');
-      }
+      const token = getEnv().TELEGRAM_BOT_TOKEN;
 
       const response = await fetch(
         `https://api.telegram.org/file/bot${token}/${file.file_path}`,

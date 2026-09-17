@@ -1,20 +1,20 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { EnvValidationError, getEnv } from '@common/config';
 
 async function bootstrap() {
+  // Fail fast before Nest wires anything up.
+  const env = getEnv();
+
   const app = await NestFactory.create(AppModule, {
     logger: ['log', 'error', 'warn', 'debug'],
   });
 
   app.setGlobalPrefix('api/v1');
 
-  const corsOrigins = process.env['CORS_ORIGINS']
-    ?.split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
   app.enableCors({
-    origin: corsOrigins && corsOrigins.length > 0 ? corsOrigins : true,
+    origin: env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : true,
     credentials: false,
   });
 
@@ -30,16 +30,32 @@ async function bootstrap() {
   // Enable graceful shutdown
   app.enableShutdownHooks();
 
-  const port = process.env['PORT'] ?? 3000;
-  await app.listen(port);
+  await app.listen(env.PORT);
 
   console.log('🤖 Remy bot is running...');
-  console.log(`🌐 HTTP server listening on port ${port} (prefix /api/v1)`);
-  console.log('📅 Reminder scheduler should trigger every minute');
+  console.log(`🌐 HTTP server listening on port ${env.PORT} (prefix /api/v1)`);
+  if (env.OWNER_TELEGRAM_ID !== undefined) {
+    console.log(
+      `🔒 Owner lock on: only Telegram user ${env.OWNER_TELEGRAM_ID} is served`,
+    );
+  } else {
+    console.warn(
+      '⚠️  OWNER_TELEGRAM_ID is not set: the bot will answer anyone who finds it',
+    );
+  }
+  if (env.DEV_ALLOW_MOCK_INITDATA) {
+    console.warn(
+      '⚠️  DEV_ALLOW_MOCK_INITDATA is on: unsigned mock initData is accepted (development only)',
+    );
+  }
   console.log('Press Ctrl+C to stop');
 }
 
-bootstrap().catch((error) => {
-  console.error('Failed to start application:', error);
+bootstrap().catch((error: unknown) => {
+  if (error instanceof EnvValidationError) {
+    console.error(`❌ ${error.message}`);
+  } else {
+    console.error('Failed to start application:', error);
+  }
   process.exit(1);
 });

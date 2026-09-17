@@ -4,6 +4,7 @@ import { parse } from '@tma.js/init-data-node';
 import { InvalidInputError } from '@common/errors';
 import { EnsureUserUsecase } from '@usecases/user';
 import type { User } from '@domain/user';
+import { getEnv } from '@common/config';
 
 export interface AuthResult {
   token: string;
@@ -19,8 +20,6 @@ export interface UserDto {
   username: string | null;
   timezone: string | null;
 }
-
-const DEFAULT_EXPIRES_IN = '15m';
 
 @Injectable()
 export class AuthService {
@@ -43,11 +42,9 @@ export class AuthService {
       ...(tgUser.username ? { username: tgUser.username } : {}),
     });
 
-    const expiresIn = (process.env['JWT_EXPIRES_IN'] ??
-      DEFAULT_EXPIRES_IN) as unknown as number;
     const token = await this.jwtService.signAsync(
       { sub: user.id, tgId: user.telegramUserId },
-      { expiresIn },
+      { expiresIn: getEnv().JWT_EXPIRES_IN as unknown as number },
     );
     const decoded = this.jwtService.decode<{ exp: number }>(token);
     const expiresAt = new Date(decoded.exp * 1000).toISOString();

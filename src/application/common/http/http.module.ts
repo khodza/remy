@@ -13,17 +13,18 @@ import { UserController } from './controllers/user.controller';
 import { TaskController } from './controllers/task.controller';
 import { AiController } from './controllers/ai.controller';
 import { HealthController } from './controllers/health.controller';
+import { getEnv } from '@common/config';
 
 @Module({
   imports: [
     JwtModule.registerAsync({
       useFactory: (): JwtModuleOptions => {
-        const secret = process.env['JWT_SECRET'];
-        if (!secret) {
-          throw new Error('JWT_SECRET is not configured');
-        }
-        const expiresIn = (process.env['JWT_EXPIRES_IN'] ?? '15m') as unknown as number;
-        return { secret, signOptions: { expiresIn } };
+        const env = getEnv();
+        return {
+          secret: env.JWT_SECRET,
+          // jsonwebtoken accepts "15m"-style strings; the type says number.
+          signOptions: { expiresIn: env.JWT_EXPIRES_IN as unknown as number },
+        };
       },
     }),
     TaskModule,

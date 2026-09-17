@@ -8,15 +8,19 @@ import { NotificationModule } from './application/common/notification/notificati
 import { BotModule } from './application/common/bot/bot.module';
 import { RemindersSchedulerModule } from './application/common/scheduler/scheduler.module';
 import { HttpModule } from './application/common/http/http.module';
+import { getEnv, loadEnv } from '@common/config';
 
 @Module({
   imports: [
+    // `validate` runs once at boot and throws a readable list of problems
+    // (EnvValidationError) instead of letting a bad value surface later.
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: (config) => loadEnv(config),
     }),
-    MongooseModule.forRoot(
-      process.env['MONGODB_URI'] ?? 'mongodb://localhost:27017/remy',
-    ),
+    MongooseModule.forRootAsync({
+      useFactory: () => ({ uri: getEnv().MONGODB_URI }),
+    }),
     TaskModule,
     UserModule,
     OpenAIModule,

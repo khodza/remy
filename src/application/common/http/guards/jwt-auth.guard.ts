@@ -1,9 +1,11 @@
 import {
   type CanActivate,
   type ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { getEnv } from '@common/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import type { AuthContext } from '../types';
@@ -33,6 +35,11 @@ export class JwtAuthGuard implements CanActivate {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Invalid token';
       throw new UnauthorizedException(message);
+    }
+
+    const owner = getEnv().OWNER_TELEGRAM_ID;
+    if (owner !== undefined && payload.tgId !== owner) {
+      throw new ForbiddenException('This is a private bot');
     }
 
     const auth: AuthContext = {

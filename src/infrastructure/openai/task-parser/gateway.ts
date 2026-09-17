@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
-import fetch from 'node-fetch';
+import { getEnv } from '@common/config';
 import { TaskParserGateway } from '@domain/ai/gateway/task-parser';
 import {
   TaskParserInput,
@@ -25,11 +25,7 @@ export class TaskParserGatewayImpl implements TaskParserGateway {
   private readonly client: OpenAI;
 
   constructor() {
-    const apiKey = process.env['OPENAI_API_KEY'];
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY is not defined');
-    }
-    this.client = new OpenAI({ apiKey, fetch: fetch as any });
+    this.client = new OpenAI({ apiKey: getEnv().OPENAI_API_KEY });
   }
 
   public async parse(input: TaskParserInput): Promise<TaskParserOutput> {
@@ -75,7 +71,8 @@ export class TaskParserGatewayImpl implements TaskParserGateway {
         parsed === null ||
         !('description' in parsed) ||
         !('scheduledAt' in parsed) ||
-        typeof (parsed as Record<string, unknown>)['description'] !== 'string' ||
+        typeof (parsed as Record<string, unknown>)['description'] !==
+          'string' ||
         typeof (parsed as Record<string, unknown>)['scheduledAt'] !== 'string'
       ) {
         throw new Error('Invalid response format from OpenAI');
@@ -112,10 +109,17 @@ function extractRecurrence(value: unknown): Recurrence | null {
 
   const recurrence: Recurrence = { type: type as RecurrenceType };
   const interval = obj['intervalDays'];
-  if (typeof interval === 'number' && Number.isFinite(interval) && interval >= 1) {
+  if (
+    typeof interval === 'number' &&
+    Number.isFinite(interval) &&
+    interval >= 1
+  ) {
     recurrence.intervalDays = Math.floor(interval);
   }
-  if (recurrence.type === 'every_n_days' && recurrence.intervalDays === undefined) {
+  if (
+    recurrence.type === 'every_n_days' &&
+    recurrence.intervalDays === undefined
+  ) {
     // Model asked for interval recurrence without telling us how often —
     // default to 1 so the task still works.
     recurrence.intervalDays = 1;

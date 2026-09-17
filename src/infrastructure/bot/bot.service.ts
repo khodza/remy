@@ -4,6 +4,7 @@ import { Bot } from 'grammy';
 import { MessageHandler } from './handlers/message.handler';
 import { CallbackHandler } from './handlers/callback.handler';
 import { BOT_COMMANDS, CommandHandler } from './handlers/command.handler';
+import { getEnv } from '@common/config';
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
@@ -13,11 +14,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private commandHandler!: CommandHandler;
 
   constructor(private moduleRef: ModuleRef) {
-    const token = process.env['TELEGRAM_BOT_TOKEN'];
-    if (!token) {
-      throw new Error('TELEGRAM_BOT_TOKEN is not defined');
-    }
-    this.bot = new Bot(token);
+    this.bot = new Bot(getEnv().TELEGRAM_BOT_TOKEN);
   }
 
   public async onModuleInit(): Promise<void> {
@@ -34,16 +31,16 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     this.setupHandlers();
 
     // Populate Telegram's "/" menu. Non-fatal: the bot works without it.
-    this.bot.api
-      .setMyCommands([...BOT_COMMANDS])
-      .catch((error: unknown) => {
-        console.error('⚠️  Failed to register bot commands:', error);
-      });
+    this.bot.api.setMyCommands([...BOT_COMMANDS]).catch((error: unknown) => {
+      console.error('⚠️  Failed to register bot commands:', error);
+    });
 
     // Start bot in background (don't await - it runs a long-polling loop)
     this.bot.start().catch((error) => {
       console.error('❌ Failed to start Telegram bot:', error);
-      console.log('⚠️  Bot will not respond to messages, but scheduler will still run');
+      console.log(
+        '⚠️  Bot will not respond to messages, but scheduler will still run',
+      );
     });
     console.log('✅ Telegram bot starting in background...');
   }
@@ -65,6 +62,23 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         `❌ Error while handling update ${err.ctx.update.update_id}:`,
         err.error,
       );
+    });
+
+    // Owner lock: Remy is a single-user bot. Everyone else gets one polite
+    // line and no further processing (no DB writes, no OpenAI calls).
+    this.bot.use(async (ctx, next) => {
+      const owner = getEnv().OWNER_TELEGRAM_ID;
+      if (owner === undefined || ctx.from?.id === owner) {
+        await next();
+        return;
+      }
+      if (ctx.callbackQuery) {
+        await ctx
+          .answerCallbackQuery({ text: '🔒 This is a private bot.' })
+          .catch(() => undefined);
+      } else if (ctx.message) {
+        await ctx.reply('🔒 This is a private bot.').catch(() => undefined);
+      }
     });
 
     // Commands

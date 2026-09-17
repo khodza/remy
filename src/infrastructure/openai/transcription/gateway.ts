@@ -6,18 +6,14 @@ import {
   TranscriptionOutput,
 } from '@domain/ai/gateway/transcription/types';
 import { TranscriptionFailedError } from '@domain/ai/errors';
+import { getEnv } from '@common/config';
 
 @Injectable()
 export class TranscriptionGatewayImpl implements TranscriptionGateway {
   private readonly client: OpenAI;
 
   constructor() {
-    const apiKey = process.env['OPENAI_API_KEY'];
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY is not defined');
-    }
-    // Use default fetch (native in Node.js 18+)
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({ apiKey: getEnv().OPENAI_API_KEY });
   }
 
   public async transcribe(
