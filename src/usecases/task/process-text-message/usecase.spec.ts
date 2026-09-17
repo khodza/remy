@@ -31,6 +31,7 @@ describe('ProcessTextMessageUsecase', () => {
       findById: jest.fn(),
       findByUserId: jest.fn(),
       findPendingReminders: jest.fn(),
+      findOverdueRecurring: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
     };

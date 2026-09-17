@@ -15,7 +15,9 @@ export class ReminderScheduler implements OnModuleInit {
     console.log('⏰ Next trigger: within 60 seconds');
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  // Sends are sequential, so a slow run can outlast a minute; overlapping
+  // runs would both send tasks the first hasn't stamped as sent yet.
+  @Cron(CronExpression.EVERY_MINUTE, { waitForCompletion: true })
   public async sendReminders(): Promise<void> {
     try {
       console.log('⏰ [CRON] Reminder scheduler triggered at', new Date().toISOString());

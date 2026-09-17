@@ -3,7 +3,6 @@ import { Domain } from '@common/tokens';
 import { NotificationGatewayImpl } from '@infra/bot/notification/gateway';
 import { TelegramBotService } from '@infra/bot/bot.service';
 
-
 @Module({
   imports: [],
   providers: [

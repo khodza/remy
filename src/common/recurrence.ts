@@ -21,6 +21,28 @@ export function computeNextOccurrence(
   return next;
 }
 
+/**
+ * Latest occurrence at or before `now`, starting from `current`. Returns
+ * `current` unchanged while the next occurrence is still in the future. Used
+ * to roll an ignored recurring task onto its newest cycle so it gets reminded
+ * again instead of staying stuck on a missed one.
+ */
+export function computeLatestOccurrence(
+  current: Date,
+  recurrence: Recurrence,
+  now: Date = new Date(),
+): Date {
+  let latest = current;
+  // Same iteration cap as computeNextOccurrence; a task further behind
+  // simply catches up over the following calls.
+  for (let i = 0; i < 1000; i++) {
+    const next = advanceOnce(latest, recurrence);
+    if (next.getTime() > now.getTime()) break;
+    latest = next;
+  }
+  return latest;
+}
+
 function advanceOnce(current: Date, recurrence: Recurrence): Date {
   switch (recurrence.type) {
     case 'daily':

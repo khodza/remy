@@ -36,30 +36,21 @@ export function validateDelayMinutes(delayMinutes: number): void {
 }
 
 /**
- * Validates timezone is a valid IANA timezone string
- * Uses a simple regex check for now - can be enhanced with full IANA list if needed
+ * Validates timezone is a valid IANA timezone string.
+ * Delegates to Intl (the same engine date-fns-tz uses) instead of a name
+ * pattern: real zone names vary too much ("America/New_York",
+ * "America/Argentina/Buenos_Aires", "Etc/GMT+5") for a regex to cover.
  */
 export function validateTimezone(timezone: string): void {
   if (!timezone || timezone.trim().length === 0) {
     throw new InvalidInputError('Timezone cannot be empty');
   }
 
-  // Basic validation: timezone should match IANA format (e.g., "America/New_York", "UTC", "Europe/London")
-  // IANA timezones typically have format: Continent/City or special cases like UTC, GMT
-  const timezonePattern = /^([A-Z][a-z]+\/[A-Z][a-z_]+|UTC|GMT[+-]?\d{1,2}?)$/;
-
-  if (!timezonePattern.test(timezone)) {
-    throw new InvalidInputError(
-      `Invalid timezone format: "${timezone}". Expected IANA timezone like "America/New_York" or "UTC"`,
-    );
-  }
-
-  // Additional check: try to use it with Intl.DateTimeFormat to verify it's actually supported
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: timezone });
   } catch (error) {
     throw new InvalidInputError(
-      `Unsupported timezone: "${timezone}". Please use a valid IANA timezone.`,
+      `Invalid timezone: "${timezone}". Expected IANA timezone like "America/New_York" or "UTC"`,
       error,
     );
   }

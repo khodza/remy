@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { InlineKeyboard } from 'grammy';
+import { GrammyError, InlineKeyboard } from 'grammy';
 import { NotificationGateway } from '@domain/notification/gateway';
 import { SendReminderInput } from '@domain/notification/gateway/types';
+import { NotificationFailedError } from '@domain/notification/errors';
 import { TelegramBotService } from '../bot.service';
+import { escapeHtml } from '../html';
 import { format } from 'date-fns';
 
 @Injectable()
@@ -18,10 +20,24 @@ export class NotificationGatewayImpl implements NotificationGateway {
       .row()
       .text('⏰ +1hr', `delay:${input.taskId}:60`);
 
-    await bot.api.sendMessage(
-      input.chatId,
-      `🔔 *Reminder!*\n\n📝 ${input.description}\n⏰ Scheduled: ${format(input.scheduledAt, 'PPpp')}`,
-      { reply_markup: keyboard, parse_mode: 'Markdown' },
-    );
+    try {
+      await bot.api.sendMessage(
+        input.chatId,
+        `🔔 <b>Reminder!</b>\n\n📝 ${escapeHtml(input.description)}\n⏰ Scheduled: ${format(input.scheduledAt, 'PPpp')}`,
+        { reply_markup: keyboard, parse_mode: 'HTML' },
+      );
+    } catch (error) {
+      // 400 (bad request, chat not found) and 403 (bot blocked, user
+      // deactivated) fail the same way on every retry; anything else
+      // (429, 5xx, network) may succeed on the next tick.
+      const permanent =
+        error instanceof GrammyError &&
+        (error.error_code === 400 || error.error_code === 403);
+      throw new NotificationFailedError(
+        `Failed to send reminder for task ${input.taskId}`,
+        error,
+        { permanent },
+      );
+    }
   }
 }

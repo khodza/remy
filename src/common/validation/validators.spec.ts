@@ -81,14 +81,27 @@ describe('validateTimezone', () => {
     expect(() => validateTimezone('Asia/Tokyo')).not.toThrow();
   });
 
+  it.each([
+    'America/New_York',
+    'America/Los_Angeles',
+    'America/Sao_Paulo',
+    'America/Argentina/Buenos_Aires',
+    'Etc/GMT+5',
+  ])('should pass for %s', (timezone) => {
+    expect(() => validateTimezone(timezone)).not.toThrow();
+  });
+
   it('should throw for empty string', () => {
     expect(() => validateTimezone('')).toThrow(InvalidInputError);
     expect(() => validateTimezone('')).toThrow('Timezone cannot be empty');
   });
 
-  it('should throw for invalid format', () => {
+  it('should throw for unknown timezone', () => {
     expect(() => validateTimezone('invalid')).toThrow(InvalidInputError);
-    expect(() => validateTimezone('invalid')).toThrow('Invalid timezone format');
+    expect(() => validateTimezone('invalid')).toThrow('Invalid timezone');
+    expect(() => validateTimezone('Mars/Olympus_Mons')).toThrow(
+      InvalidInputError,
+    );
   });
 
   it('should throw for whitespace-only string', () => {

@@ -63,19 +63,23 @@ export class TaskRepositoryImpl implements TaskRepository {
   }
 
   public async findPendingReminders(beforeDate: Date): Promise<Task[]> {
-    // Find tasks that are:
-    // 1. Pending status
-    // 2. Scheduled before the given date
-    // 3. Either never sent OR not sent in the last minute
-    const oneMinuteAgo = new Date(Date.now() - 60000);
-
+    // One reminder per occurrence: a task is due again only once its
+    // scheduled_at moves past the last send (delay, edit, recurrence
+    // rollover). A missing or null last_sent_at compares lower than any
+    // date, so never-sent tasks match as well.
     const docs = await this.model.find({
       status: TaskStatus.Pending,
       scheduled_at: { $lte: beforeDate },
-      $or: [
-        { last_sent_at: { $exists: false } }, // Never sent
-        { last_sent_at: { $lt: oneMinuteAgo } }, // Not sent recently
-      ],
+      $expr: { $lt: ['$last_sent_at', '$scheduled_at'] },
+    });
+    return docs.map((doc) => this.documentToEntity(doc));
+  }
+
+  public async findOverdueRecurring(beforeDate: Date): Promise<Task[]> {
+    const docs = await this.model.find({
+      status: TaskStatus.Pending,
+      scheduled_at: { $lte: beforeDate },
+      recurrence: { $ne: null },
     });
     return docs.map((doc) => this.documentToEntity(doc));
   }

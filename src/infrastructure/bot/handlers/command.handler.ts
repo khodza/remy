@@ -3,6 +3,7 @@ import { Context, InlineKeyboard } from 'grammy';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { ListTasksUsecase } from '@usecases/task/list-tasks';
 import { format } from 'date-fns';
+import { escapeHtml } from '../html';
 
 @Injectable()
 export class CommandHandler {
@@ -71,30 +72,30 @@ export class CommandHandler {
 
       // Show older tasks as plain text
       if (tasksWithoutButtons.length > 0) {
-        let message = `📋 *Your Tasks:*\n\n`;
+        let message = `📋 <b>Your Tasks:</b>\n\n`;
         for (const task of tasksWithoutButtons) {
           const emoji = task.isOverdue ? '🔴' : '🟢';
           const status = task.isOverdue ? '(Overdue)' : '';
-          message += `${emoji} *${task.description}*\n`;
+          message += `${emoji} <b>${escapeHtml(task.description)}</b>\n`;
           message += `   ⏰ ${format(task.scheduledAt, 'PPpp')} ${status}\n\n`;
         }
-        await ctx.reply(message, { parse_mode: 'Markdown' });
+        await ctx.reply(message, { parse_mode: 'HTML' });
       } else {
-        await ctx.reply(`📋 *Your Tasks:*`, { parse_mode: 'Markdown' });
+        await ctx.reply(`📋 <b>Your Tasks:</b>`, { parse_mode: 'HTML' });
       }
 
       // Show last 3 tasks with action buttons
       for (const task of tasksWithButtons) {
         const emoji = task.isOverdue ? '🔴' : '🟢';
         const status = task.isOverdue ? ' (Overdue)' : '';
-        const text = `${emoji} *${task.description}*\n⏰ ${format(task.scheduledAt, 'PPpp')}${status}`;
+        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n⏰ ${format(task.scheduledAt, 'PPpp')}${status}`;
 
         const keyboard = new InlineKeyboard()
           .text('✅ Done', `complete:${task.id}`)
           .text('⏰ Delay', `delay:${task.id}:15`)
           .text('🗑️ Delete', `delete:${task.id}`);
 
-        await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
       }
     } catch (error) {
       console.error('Failed to handle list command:', error);
@@ -170,8 +171,8 @@ export class CommandHandler {
         .text('🇦🇺 Australia/Sydney', 'tz:Australia/Sydney');
 
       await ctx.reply(
-        `⚙️ *Settings*\n\n🕐 Current timezone: ${currentTimezone}\n\nSelect your timezone:`,
-        { reply_markup: keyboard, parse_mode: 'Markdown' },
+        `⚙️ <b>Settings</b>\n\n🕐 Current timezone: ${escapeHtml(currentTimezone)}\n\nSelect your timezone:`,
+        { reply_markup: keyboard, parse_mode: 'HTML' },
       );
     } catch (error) {
       console.error('Failed to handle settings command:', error);

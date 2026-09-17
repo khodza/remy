@@ -29,11 +29,17 @@ describe('DelayTaskUsecase', () => {
       findById: jest.fn(),
       findByUserId: jest.fn(),
       findPendingReminders: jest.fn(),
+      findOverdueRecurring: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
     };
 
     usecase = new DelayTaskUsecase(taskRepository);
+    jest.useFakeTimers({ now });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('should delay a task by the given minutes', async () => {
@@ -57,6 +63,22 @@ describe('DelayTaskUsecase', () => {
       scheduledAt: newScheduledAt,
     });
     expect(result.scheduledAt).toEqual(newScheduledAt);
+  });
+
+  it('should delay an overdue task from now, not from its old time', async () => {
+    const overdueTask = {
+      ...mockTask,
+      scheduledAt: new Date('2026-04-16T09:00:00Z'),
+    };
+    taskRepository.findById.mockResolvedValue(overdueTask);
+    taskRepository.update.mockResolvedValue(overdueTask);
+
+    await usecase.execute({ taskId: 'task-1', delayMinutes: 15 });
+
+    expect(taskRepository.update).toHaveBeenCalledWith({
+      id: 'task-1',
+      scheduledAt: new Date('2026-04-16T12:15:00Z'),
+    });
   });
 
   it('should throw InvalidInputError for invalid delay', async () => {

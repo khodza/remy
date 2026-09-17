@@ -1,9 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { Context } from 'grammy';
-import { ProcessTextMessageUsecase } from '@usecases/task/process-text-message';
-import { ProcessVoiceMessageUsecase } from '@usecases/task/process-voice-message';
+import {
+  ProcessTextMessageUsecase,
+  type ProcessTextMessageOutput,
+} from '@usecases/task/process-text-message';
+import {
+  ProcessVoiceMessageUsecase,
+  type ProcessVoiceMessageOutput,
+} from '@usecases/task/process-voice-message';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { format } from 'date-fns';
+import { escapeHtml } from '../html';
 
 @Injectable()
 export class MessageHandler {
@@ -20,6 +27,7 @@ export class MessageHandler {
     // Skip command messages (they're handled by command handler)
     if (text.startsWith('/')) return;
 
+    let result: ProcessTextMessageOutput;
     try {
       // Ensure user exists
       const user = await this.ensureUserUsecase.execute({
@@ -30,29 +38,33 @@ export class MessageHandler {
       });
 
       // Process message
-      const result = await this.processTextMessageUsecase.execute({
+      result = await this.processTextMessageUsecase.execute({
         userId: user.id,
         telegramChatId: ctx.chat?.id ?? ctx.from.id,
         text: text,
         userTimezone: user.timezone ?? undefined,
       });
-
-      await ctx.reply(
-        `✅ *Task created!*\n\n📝 ${result.description}\n⏰ ${format(result.scheduledAt, 'PPpp')}`,
-        { parse_mode: 'Markdown' },
-      );
     } catch (error) {
       console.error('Failed to process text message:', error);
       await ctx.reply(
         '❌ Failed to create task. Please try again or use a different format.',
       );
+      return;
     }
+
+    // Kept outside the try: the task is already saved, so a failed
+    // confirmation must not tell the user to retry (that duplicates it).
+    await ctx.reply(
+      `✅ <b>Task created!</b>\n\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}`,
+      { parse_mode: 'HTML' },
+    );
   }
 
   public async handleVoice(ctx: Context): Promise<void> {
     const voice = ctx.message?.voice;
     if (voice === undefined || ctx.from === undefined) return;
 
+    let result: ProcessVoiceMessageOutput;
     try {
       await ctx.reply('🎤 Processing your voice message...');
 
@@ -77,23 +89,24 @@ export class MessageHandler {
       });
 
       // Process voice message
-      const result = await this.processVoiceMessageUsecase.execute({
+      result = await this.processVoiceMessageUsecase.execute({
         userId: user.id,
         telegramChatId: ctx.chat?.id ?? ctx.from.id,
         audioFileBuffer: audioBuffer,
         mimeType: voice.mime_type ?? 'audio/ogg',
         userTimezone: user.timezone ?? undefined,
       });
-
-      await ctx.reply(
-        `✅ *Task created from voice!*\n\n🎤 Transcribed: "${result.transcribedText}"\n📝 ${result.description}\n⏰ ${format(result.scheduledAt, 'PPpp')}`,
-        { parse_mode: 'Markdown' },
-      );
     } catch (error) {
       console.error('Failed to process voice message:', error);
       await ctx.reply(
         '❌ Failed to process voice message. Please try again with a clearer message.',
       );
+      return;
     }
+
+    await ctx.reply(
+      `✅ <b>Task created from voice!</b>\n\n🎤 Transcribed: "${escapeHtml(result.transcribedText)}"\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}`,
+      { parse_mode: 'HTML' },
+    );
   }
 }

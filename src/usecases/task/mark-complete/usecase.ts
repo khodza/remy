@@ -24,10 +24,9 @@ export class MarkCompleteUsecase {
       }
 
       // Recurring tasks never "complete" — they advance to the next
-      // occurrence so the user keeps getting reminded. The scheduler's
-      // 1-minute dedupe window self-clears because the next fire is at
-      // least a day away (or `intervalDays` days), so we don't need to
-      // touch lastSentAt here.
+      // occurrence so the user keeps getting reminded. Moving scheduledAt
+      // past lastSentAt re-arms the scheduler's once-per-occurrence
+      // reminder, so we don't need to touch lastSentAt here.
       if (existing.recurrence) {
         const nextAt = computeNextOccurrence(
           existing.scheduledAt,

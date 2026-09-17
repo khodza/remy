@@ -7,6 +7,7 @@ import { UpdateTimezoneUsecase } from '@usecases/user/update-timezone';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { TaskRepository } from '@domain/task/repository';
 import { Domain } from '@common/tokens';
+import { escapeHtml } from '../html';
 
 @Injectable()
 export class CallbackHandler {
@@ -114,8 +115,8 @@ export class CallbackHandler {
 
     await ctx.answerCallbackQuery({ text: '✅ Timezone updated!' });
     await ctx.editMessageText(
-      `✅ *Timezone updated!*\n\n🕐 New timezone: ${timezone}`,
-      { parse_mode: 'Markdown' },
+      `✅ <b>Timezone updated!</b>\n\n🕐 New timezone: ${escapeHtml(timezone)}`,
+      { parse_mode: 'HTML' },
     );
   }
 

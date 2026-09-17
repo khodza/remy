@@ -7,7 +7,7 @@ import {
   FailedToUpdateTaskError,
   TaskNotFoundError,
 } from '@domain/task/errors';
-import { addMinutes } from 'date-fns';
+import { addMinutes, max } from 'date-fns';
 import { validateDelayMinutes } from '@common/validation';
 
 @Injectable()
@@ -28,8 +28,13 @@ export class DelayTaskUsecase {
         throw new TaskNotFoundError(`Task with id ${input.taskId} not found`);
       }
 
-      // Calculate new scheduled time
-      const newScheduledAt = addMinutes(task.scheduledAt, input.delayMinutes);
+      // Calculate new scheduled time. Snoozing an overdue task counts from
+      // now: adding to the old time would leave it in the past, and the
+      // reminder would fire again immediately.
+      const newScheduledAt = addMinutes(
+        max([task.scheduledAt, new Date()]),
+        input.delayMinutes,
+      );
 
       // Update task
       const updatedTask = await this.taskRepository.update({

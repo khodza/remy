@@ -51,6 +51,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private setupHandlers(): void {
+    // Without an error handler grammY stops long polling on the first error
+    // thrown by any handler (e.g. a failed reply), silently killing the bot.
+    this.bot.catch((err) => {
+      console.error(
+        `❌ Error while handling update ${err.ctx.update.update_id}:`,
+        err.error,
+      );
+    });
+
     // Commands
     this.bot.command('start', (ctx) => this.commandHandler.handleStart(ctx));
     this.bot.command('list', (ctx) => this.commandHandler.handleList(ctx));
