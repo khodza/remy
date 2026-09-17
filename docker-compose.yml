@@ -1,0 +1,19 @@
+# Local infrastructure for Remy. `npm run dev:db` starts it; `npm run dev`
+# starts it and then the API in watch mode.
+services:
+  mongo:
+    image: mongo:7
+    container_name: remy-mongo
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - remy-mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.runCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  remy-mongo-data:

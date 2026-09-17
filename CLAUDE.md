@@ -1,88 +1,78 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository (the Remy backend).
 
-## Project Overview
+## What this is
 
-This is a NestJS application with a monorepo structure configured to use Clean Architecture principles. The project uses TypeScript with strict compiler settings and integrates the Grammy framework for Telegram bot functionality.
+Backend of **Remy**, a single-owner AI reminder assistant for Telegram:
+NestJS 11 + grammY (bot) + MongoDB (mongoose) + OpenAI, plus an HTTP API under
+`/api/v1` consumed by the Telegram Mini App in the sibling repo
+`../remy-webapp` (separate git repo, talks to us over HTTP only).
 
-## Architecture
+## Commands
 
-The codebase follows Clean Architecture with path aliases defined for different layers:
-- `@application/*` → Application layer (src/application/)
-- `@domain/*` → Domain layer (src/domain/)
-- `@infra/*` → Infrastructure layer (src/infrastructure/)
-- `@usecases/*` → Use cases layer (src/usecases/)
-- `@common/*` → Common utilities (src/common/)
-
-Currently, the project has an `api` application entry point defined in the monorepo structure. The infrastructure layer contains bot-related code (Telegram integration using Grammy).
-
-## Build System
-
-- **Compiler**: Uses SWC for faster builds (configured in nest-cli.json)
-- **Type Checking**: Enabled during builds
-- **Output**: Built artifacts go to `./build` directory
-- **Monorepo**: Configured with NestJS CLI monorepo mode
-- **Watch Mode**: Assets are watched automatically during development
-
-## Common Commands
-
-### Development
 ```bash
-npm run dev:api          # Start API in watch mode
-npm run debug:api        # Start API with debugger
-npm start               # Start API (production mode)
+npm run dev            # docker compose mongo + API watch mode (:3000)
+npm run dev:api        # API watch mode only
+npm run check          # typecheck + lint + tests — run before finishing any task
+npm test               # jest unit tests (mocks only, no DB/network)
+npm run typecheck      # tsc --noEmit
+npm run lint           # eslint --fix
+npm run build          # SWC build into build/ ; start with npm run start:prod:api
 ```
 
-### Building
-```bash
-npm run build           # Build all projects
-npm run build:api       # Build API application only
-```
+Pre-commit runs eslint + prettier on staged `.ts` via husky/lint-staged.
 
-### Testing
-```bash
-npm test               # Run unit tests
-npm run test:watch     # Run tests in watch mode
-npm run test:cov       # Run tests with coverage
-npm run test:ci        # Run tests for CI (with coverage)
-npm run test:e2e       # Run end-to-end tests
-npm run test:debug     # Run tests with debugger
-```
+## Architecture (Clean Architecture)
 
-### Code Quality
-```bash
-npm run lint           # Run ESLint with auto-fix
-npm run format         # Format code with Prettier
-npm run lint-staged    # Run lint-staged (for pre-commit)
-```
+Path aliases: `@domain`, `@usecases`, `@infra`, `@application`, `@common` →
+`src/<layer>/`.
 
-## Testing Configuration
+- `domain/` — types, repository/gateway **interfaces**, domain errors. No Nest,
+  no mongoose, no grammY here.
+- `usecases/<area>/<name>/` — `usecase.ts`, `types.ts`, `usecase.spec.ts`,
+  `index.ts`. Injected via `Symbol.for` tokens from `@common/tokens`.
+- `infrastructure/` — `mongodb/` (schemas + repository impls), `openai/`
+  (parser + transcription gateways), `bot/` (grammY service + handlers),
+  `scheduler/` (cron).
+- `application/common/*` — Nest modules; `application/common/http/` —
+  controllers, DTOs (class-validator), guards, exception filter.
+- `common/config/env.ts` — **the only place that reads `process.env`**. Use
+  `getEnv()`; add new variables to the zod schema and to `.env.example`.
 
-- **Unit Tests**: Located in `src/` alongside source files (*.spec.ts)
-- **E2E Tests**: Located in `test/` directory
-- **Test Runner**: Jest with ts-jest preset
-- **Path Mapping**: Jest is configured to resolve TypeScript path aliases
-- **Coverage**: Collected from all TypeScript/JavaScript files, excluding node_modules, build, coverage, scripts, and dist directories
+Flow: message → `MessageHandler` → `ProcessTextMessageUsecase` →
+`TaskParserGateway` → `TaskRepository`. Cron each minute →
+`SendPendingRemindersUsecase` → `NotificationGateway`. Buttons →
+`CallbackHandler`.
 
-## TypeScript Configuration
+## Rules
 
-The project uses extremely strict TypeScript settings:
-- Extends `@tsconfig/node22` and `@tsconfig/strictest`
-- All strict flags enabled (noImplicitAny, strictNullChecks, etc.)
-- `noUncheckedIndexedAccess` enabled (array access returns `T | undefined`)
-- Module system: NodeNext with nodenext resolution
-- Target: ES2023
-- Decorators enabled (required for NestJS)
+- Keep layers clean: use cases depend on domain interfaces only; grammY and
+  mongoose types never leak into domain or use cases.
+- Every use case gets a spec with mocked repositories/gateways. Run
+  `npm run check` before you finish.
+- Bot messages use `parse_mode: 'HTML'` and `escapeHtml()` from
+  `infrastructure/bot/html.ts` for any user-provided text. Never Markdown.
+- Times shown to the user must be in the user's timezone (currently a known
+  bug; Phase 1 of the plan fixes it). Do not add new server-local `format()`
+  calls.
+- Recurrence: `common/recurrence.ts` (`computeNextOccurrence`,
+  `computeLatestOccurrence`, `describeRecurrence`). Known limitations
+  documented in `recurrence.spec.ts`.
+- `noUncheckedIndexedAccess` is on: index access returns `T | undefined`.
+- Don't edit `../remy-webapp` from a backend task unless explicitly asked; the
+  HTTP contract is documented in that repo's `src/shared/api/CLAUDE.md`. When
+  you change a DTO, say so in the final message.
 
-## Node Version
+## Single-owner mode and dev bypass
 
-The project requires Node.js 22.17 (see .nvmrc).
+- `OWNER_TELEGRAM_ID` — bot middleware and both HTTP guards reject anyone
+  else.
+- `DEV_ALLOW_MOCK_INITDATA=true` (never in production) — `InitDataGuard`
+  accepts the frontend's mocked initData (`hash=dev-mock-hash`) so the Mini
+  App works from a plain browser.
 
-## Key Dependencies
+## Plan
 
-- **NestJS**: Core framework for application structure
-- **Grammy**: Telegram bot framework (integrated in infrastructure layer)
-- **TypeScript**: Strict mode with latest features
-- **Jest**: Testing framework with ts-jest
-- **ESLint**: Code linting with Prettier integration
+Roadmap, bug list and design: `../remy-plan/` (`remy.html` readable version,
+`PLAN.md` technical version).

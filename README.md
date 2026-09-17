@@ -1,98 +1,106 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Remy
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+AI reminder assistant for Telegram. Send the bot a message or a voice note
+("call mom tomorrow at 5", "take vitamins every day at 9") and it reminds you at
+the right time with Done / Delay buttons. A Telegram Mini App
+([`../remy-webapp`](../remy-webapp)) shows your day and lets you edit tasks.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+This repo is the backend: NestJS + grammY (bot) + MongoDB + OpenAI, exposing an
+HTTP API under `/api/v1` for the Mini App.
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Quick start
 
 ```bash
-$ npm install
+nvm use                      # Node 22 (see .nvmrc)
+npm install                  # also installs the git pre-commit hook (husky)
+cp .env.example .env         # fill TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, JWT_SECRET, OWNER_TELEGRAM_ID
+npm run dev                  # starts Mongo (docker compose) + API in watch mode on :3000
 ```
 
-## Compile and run the project
+Without Docker: run your own MongoDB and use `npm run dev:api`.
 
-```bash
-# development
-$ npm run start
+The process refuses to start if a required variable is missing or malformed and
+prints the full list of problems (`src/common/config/env.ts` is the schema).
 
-# watch mode
-$ npm run start:dev
+## Everyday commands
 
-# production mode
-$ npm run start:prod
+| Command | What |
+|---|---|
+| `npm run dev` | Mongo via docker compose, then the API in watch mode |
+| `npm run dev:api` | API in watch mode only |
+| `npm run check` | typecheck + lint + unit tests (what CI should run) |
+| `npm test` / `npm run test:watch` | unit tests (jest, ts-jest) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | eslint with autofix |
+| `npm run build` | compile to `build/` (SWC) |
+| `npm run start:prod:api` | run the compiled build |
+
+A pre-commit hook runs eslint + prettier on staged `.ts` files.
+
+## How it works
+
+1. **Capture.** `message:text` / `message:voice` → `MessageHandler` →
+   `ProcessTextMessageUsecase` (voice is transcribed with Whisper first) →
+   `TaskParserGateway` (gpt-4o-mini, JSON output, the prompt receives the
+   current time in the user's timezone) → task saved in Mongo, including an
+   optional recurrence.
+2. **Remind.** A cron runs every minute (`ReminderScheduler` →
+   `SendPendingRemindersUsecase`): roll ignored recurring tasks onto their
+   latest occurrence, then send every pending task whose time has come and
+   that has not been reminded for this occurrence. Buttons: ✅ Done, +15 min,
+   +1 hour.
+3. **Act.** Callback queries (`CallbackHandler`) complete, delay or delete a
+   task, always checking the task belongs to the tapping user. Done on a
+   recurring task moves it to the next occurrence.
+4. **Mini App API.** `POST /auth/telegram` exchanges Telegram initData
+   (`Authorization: tma <raw>`) for a 15-minute JWT; everything else uses
+   `Authorization: Bearer <jwt>`. See the frontend's
+   `src/shared/api/CLAUDE.md` for the contract.
+
+## Layout (Clean Architecture)
+
+```
+src/
+├── domain/          types, repository + gateway interfaces, errors (no framework code)
+├── usecases/        one folder per use case: task/*, user/*
+├── infrastructure/  mongodb/, openai/, bot/ (grammY handlers), scheduler/
+├── application/     Nest modules and the HTTP layer (controllers, DTOs, guards, filter)
+└── common/          config (env schema), tokens (DI symbols), validation, recurrence math
 ```
 
-## Run tests
+Path aliases: `@domain/*`, `@usecases/*`, `@infra/*`, `@application/*`,
+`@common/*`.
 
-```bash
-# unit tests
-$ npm run test
+## Single-owner mode
 
-# e2e tests
-$ npm run test:e2e
+Set `OWNER_TELEGRAM_ID` to your Telegram user id. The bot then answers only you
+("🔒 This is a private bot." to anyone else, with no DB or OpenAI work), and
+the HTTP guards reject other users' initData and tokens.
 
-# test coverage
-$ npm run test:cov
+## Developing the Mini App against this backend from a plain browser
+
+The frontend's `pnpm dev` fakes the Telegram environment with
+`hash=dev-mock-hash` initData. To let this backend accept it:
+
+```
+DEV_ALLOW_MOCK_INITDATA=true
+OWNER_TELEGRAM_ID=123456789   # the frontend's VITE_MOCK_TG_USER_ID, or unset
 ```
 
-## Deployment
+Only honoured when `NODE_ENV` is not `production`; the boot log warns while it
+is on.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Environment variables
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+See [`.env.example`](.env.example); every variable is documented there.
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+## Tests
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Unit tests live next to the code (`*.spec.ts`) and use mocks only; there is no
+database or network in the suite. `test/setup-env.ts` provides a baseline
+environment. `npm run test:e2e` is wired (`test/jest-e2e.json`) but there are
+no e2e specs yet.
 
-## Resources
+## Roadmap
 
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+The full plan (bugs, features, phases) lives in `../remy-plan/`.
