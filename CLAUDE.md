@@ -53,12 +53,24 @@ Flow: message → `MessageHandler` → `ProcessTextMessageUsecase` →
   `npm run check` before you finish.
 - Bot messages use `parse_mode: 'HTML'` and `escapeHtml()` from
   `infrastructure/bot/html.ts` for any user-provided text. Never Markdown.
-- Times shown to the user must be in the user's timezone (currently a known
-  bug; Phase 1 of the plan fixes it). Do not add new server-local `format()`
-  calls.
-- Recurrence: `common/recurrence.ts` (`computeNextOccurrence`,
-  `computeLatestOccurrence`, `describeRecurrence`). Known limitations
-  documented in `recurrence.spec.ts`.
+- Every time shown to the user goes through `formatForUser` /
+  `formatForUserShort` (`common/format-date.ts`) with the task's `timezone`.
+  Never call plain date-fns `format()` for user-facing text (it formats in
+  the server's zone).
+- Task model: `scheduledAt` is the current occurrence (series time for
+  recurring tasks); `snoozedUntil` moves only the current occurrence;
+  `nextFireAt = snoozedUntil ?? scheduledAt` is derived in the repository and
+  is what the scheduler queries; `recurrence.anchorAt` never moves.
+- Scheduler: claim first (`claimDueReminder`, atomic), send second; transient
+  failures release the claim with `nextAttemptAt`, permanent ones keep it.
+- Recurrence math (`common/recurrence.ts`) runs on the task's wall clock via
+  date-fns-tz; always pass the task timezone.
+- The parser asks the model for local wall-clock time (`scheduledAtLocal`)
+  and converts with `fromZonedTime`; `interpretModelOutput` validates it.
+- Bot handlers build EnsureUser input with `toEnsureUserInput()` and pick the
+  zone with `resolveTimezone()` (`infrastructure/bot/user-input.ts`).
+- Callbacks are answered exactly once in `CallbackHandler.handle`; message
+  edits go through `ignoreNotModified`.
 - `noUncheckedIndexedAccess` is on: index access returns `T | undefined`.
 - Don't edit `../remy-webapp` from a backend task unless explicitly asked; the
   HTTP contract is documented in that repo's `src/shared/api/CLAUDE.md`. When

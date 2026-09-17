@@ -46,9 +46,10 @@ A pre-commit hook runs eslint + prettier on staged `.ts` files.
    optional recurrence.
 2. **Remind.** A cron runs every minute (`ReminderScheduler` →
    `SendPendingRemindersUsecase`): roll ignored recurring tasks onto their
-   latest occurrence, then send every pending task whose time has come and
-   that has not been reminded for this occurrence. Buttons: ✅ Done, +15 min,
-   +1 hour.
+   latest occurrence, then atomically claim and send every pending task whose
+   `nextFireAt` has come (a crash between claim and send can never duplicate
+   a reminder; transient Telegram errors are retried after 2 minutes).
+   Buttons: ✅ Done, +15 min, +1 hour. Times are shown in the task's timezone.
 3. **Act.** Callback queries (`CallbackHandler`) complete, delay or delete a
    task, always checking the task belongs to the tapping user. Done on a
    recurring task moves it to the next occurrence.
@@ -70,6 +71,13 @@ src/
 
 Path aliases: `@domain/*`, `@usecases/*`, `@infra/*`, `@application/*`,
 `@common/*`.
+
+## Timezones
+
+Every task stores the IANA zone it was created in. New users get
+`OWNER_TIMEZONE`; the Mini App replaces it with the phone's zone on first
+open; `/settings` offers a short list. Snoozing a repeating task moves only
+that occurrence (`snoozedUntil`), never the series.
 
 ## Single-owner mode
 

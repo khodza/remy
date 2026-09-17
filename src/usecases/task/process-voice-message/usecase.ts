@@ -17,31 +17,32 @@ export class ProcessVoiceMessageUsecase {
   public async execute(
     input: ProcessVoiceMessageInput,
   ): Promise<ProcessVoiceMessageOutput> {
+    let transcription;
     try {
-      // Transcribe voice message
-      const transcription = await this.transcriptionGateway.transcribe({
+      transcription = await this.transcriptionGateway.transcribe({
         audioFileBuffer: input.audioFileBuffer,
         mimeType: input.mimeType,
       });
-
-      // Process transcribed text
-      const result = await this.processTextMessageUsecase.execute({
-        userId: input.userId,
-        telegramChatId: input.telegramChatId,
-        text: transcription.text,
-        userTimezone: input.userTimezone,
-      });
-
-      return {
-        ...result,
-        transcribedText: transcription.text,
-      };
     } catch (error) {
       if (error instanceof ApplicationError) throw error;
       throw new TranscriptionFailedError(
-        'Failed to process voice message',
+        'Failed to transcribe voice message',
         error,
       );
     }
+
+    // Anything after transcription (parsing, saving) reports its own error
+    // type; wrapping it as a transcription failure misled the API client.
+    const result = await this.processTextMessageUsecase.execute({
+      userId: input.userId,
+      telegramChatId: input.telegramChatId,
+      text: transcription.text,
+      userTimezone: input.userTimezone,
+    });
+
+    return {
+      ...result,
+      transcribedText: transcription.text,
+    };
   }
 }

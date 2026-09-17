@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TaskModule } from '../task/task.module';
 import { UserModule } from '../user/user.module';
 import { OpenAIModule } from '../openai/openai.module';
@@ -27,6 +28,9 @@ import { getEnv } from '@common/config';
         };
       },
     }),
+    // Single-owner API: a generous global ceiling; paid endpoints (create,
+    // voice, parse) carry tighter per-route limits.
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 120 }]),
     TaskModule,
     UserModule,
     OpenAIModule,
@@ -43,6 +47,7 @@ import { getEnv } from '@common/config';
     InitDataGuard,
     JwtAuthGuard,
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class HttpModule {}

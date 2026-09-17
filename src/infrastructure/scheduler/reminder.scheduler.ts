@@ -1,28 +1,51 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  OnApplicationShutdown,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SendPendingRemindersUsecase } from '@usecases/task/send-pending-reminders';
 
 @Injectable()
-export class ReminderScheduler implements OnModuleInit {
+export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
+  private inFlight: Promise<void> | null = null;
+
   constructor(
     private readonly sendPendingRemindersUsecase: SendPendingRemindersUsecase,
-  ) {
-    console.log('✅ ReminderScheduler constructor called');
-  }
+  ) {}
 
   onModuleInit() {
-    console.log('✅ ReminderScheduler initialized - CRON job should be registered');
-    console.log('⏰ Next trigger: within 60 seconds');
+    console.log('✅ ReminderScheduler registered (every minute)');
   }
 
   // Sends are sequential, so a slow run can outlast a minute; overlapping
   // runs would both send tasks the first hasn't stamped as sent yet.
   @Cron(CronExpression.EVERY_MINUTE, { waitForCompletion: true })
   public async sendReminders(): Promise<void> {
+    this.inFlight = this.runOnce();
     try {
-      console.log('⏰ [CRON] Reminder scheduler triggered at', new Date().toISOString());
+      await this.inFlight;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+
+  /** Let a run that is mid-send finish before the process exits. */
+  public async onApplicationShutdown(): Promise<void> {
+    if (this.inFlight) {
+      console.log('⏳ Waiting for the current reminder run to finish...');
+      await this.inFlight.catch(() => undefined);
+    }
+  }
+
+  private async runOnce(): Promise<void> {
+    try {
       const result = await this.sendPendingRemindersUsecase.execute();
-      console.log(`📊 [CRON] Checked reminders - Sent: ${result.sentCount}, Failed: ${result.failedCount}`);
+      if (result.sentCount > 0 || result.failedCount > 0) {
+        console.log(
+          `📊 [CRON] Reminders sent: ${result.sentCount}, failed: ${result.failedCount}`,
+        );
+      }
     } catch (error) {
       console.error('❌ [CRON] Error in reminder scheduler:', error);
     }

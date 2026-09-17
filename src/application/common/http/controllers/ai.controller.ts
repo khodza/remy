@@ -1,10 +1,5 @@
-import {
-  Body,
-  Controller,
-  Inject,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Domain } from '@common/tokens';
 import type { TaskParserGateway } from '@domain/ai';
 import type { Recurrence } from '@domain/task';
@@ -32,6 +27,7 @@ export class AiController {
   ) {}
 
   @Post('parse')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async parse(
     @CurrentUser() auth: AuthContext,
     @Body() dto: ParseTextDto,

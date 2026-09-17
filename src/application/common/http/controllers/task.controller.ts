@@ -16,6 +16,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ParseObjectIdPipe } from '@nestjs/mongoose';
+import { Throttle } from '@nestjs/throttler';
 import { Domain } from '@common/tokens';
 import type { Recurrence, Task, TaskRepository } from '@domain/task';
 import { TaskNotFoundError } from '@domain/task';
@@ -41,12 +43,24 @@ import type { AuthContext } from '../types';
 const VOICE_MAX_BYTES = 20 * 1024 * 1024; // 20 MiB
 const VOICE_ALLOWED_MIME_PREFIXES = ['audio/', 'video/webm'];
 
+export interface RecurrenceDtoOut {
+  type: Recurrence['type'];
+  intervalDays?: number;
+}
+
 export interface TaskDto {
   id: string;
   description: string;
+  /** The current occurrence (series time for recurring tasks), ISO. */
   scheduledAt: string;
+  /** IANA zone the task was created in. */
+  timezone: string;
+  /** Set when a recurring task's current occurrence was delayed, ISO. */
+  snoozedUntil: string | null;
+  /** When the reminder actually fires: snoozedUntil ?? scheduledAt, ISO. */
+  nextFireAt: string;
   status: Task['status'];
-  recurrence: Recurrence | null;
+  recurrence: RecurrenceDtoOut | null;
   isOverdue?: boolean;
   createdAt: string;
   updatedAt: string;
@@ -57,13 +71,30 @@ function toDto(task: Task | TaskWithOverdueFlag): TaskDto {
     id: task.id,
     description: task.description,
     scheduledAt: task.scheduledAt.toISOString(),
+    timezone: task.timezone,
+    snoozedUntil: task.snoozedUntil ? task.snoozedUntil.toISOString() : null,
+    nextFireAt: task.nextFireAt.toISOString(),
     status: task.status,
-    recurrence: task.recurrence ?? null,
+    recurrence: task.recurrence
+      ? {
+          type: task.recurrence.type,
+          ...(task.recurrence.intervalDays !== undefined
+            ? { intervalDays: task.recurrence.intervalDays }
+            : {}),
+        }
+      : null,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
   };
   if ('isOverdue' in task) dto.isOverdue = task.isOverdue;
   return dto;
+}
+
+function withOverdue(task: Task): TaskWithOverdueFlag {
+  return {
+    ...task,
+    isOverdue: task.status === 'pending' && task.nextFireAt < new Date(),
+  };
 }
 
 @Controller('tasks')
@@ -94,7 +125,17 @@ export class TaskController {
     return { tasks: result.tasks.map(toDto) };
   }
 
+  @Get(':id')
+  async getOne(
+    @CurrentUser() auth: AuthContext,
+    @Param('id', ParseObjectIdPipe) id: string,
+  ): Promise<TaskDto> {
+    const task = await this.requireOwnedTask(id, auth.userId);
+    return toDto(withOverdue(task));
+  }
+
   @Post()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async create(
     @CurrentUser() auth: AuthContext,
     @Body() dto: CreateTaskDto,
@@ -113,12 +154,15 @@ export class TaskController {
 
     const task = await this.taskRepository.findById(result.taskId);
     if (!task) {
-      throw new TaskNotFoundError(`Task ${result.taskId} not found after create`);
+      throw new TaskNotFoundError(
+        `Task ${result.taskId} not found after create`,
+      );
     }
     return toDto(task);
   }
 
   @Post('voice')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseInterceptors(
     FileInterceptor('audio', {
       limits: { fileSize: VOICE_MAX_BYTES },
@@ -138,7 +182,9 @@ export class TaskController {
       throw new PayloadTooLargeException('audio file exceeds 20 MiB limit');
     }
     const mime = file.mimetype || 'application/octet-stream';
-    if (!VOICE_ALLOWED_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))) {
+    if (
+      !VOICE_ALLOWED_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))
+    ) {
       throw new BadRequestException(`unsupported audio mime type: ${mime}`);
     }
 
@@ -167,37 +213,60 @@ export class TaskController {
   @Patch(':id')
   async update(
     @CurrentUser() auth: AuthContext,
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @Body() dto: UpdateTaskDto,
   ): Promise<TaskDto> {
-    await this.requireOwnedTask(id, auth.userId);
+    const existing = await this.requireOwnedTask(id, auth.userId);
+    if (existing.status !== 'pending') {
+      throw new BadRequestException('Only pending tasks can be edited');
+    }
+
+    const scheduledAt =
+      dto.scheduledAt !== undefined ? new Date(dto.scheduledAt) : undefined;
+
+    // A recurrence is anchored at its first occurrence. Setting a new
+    // recurrence, or moving the series time, re-anchors it; editing only the
+    // description keeps the anchor as it is.
+    let recurrence: Recurrence | null | undefined;
+    if (dto.recurrence !== undefined) {
+      recurrence = dto.recurrence
+        ? {
+            type: dto.recurrence.type,
+            ...(dto.recurrence.intervalDays !== undefined
+              ? { intervalDays: dto.recurrence.intervalDays }
+              : {}),
+            anchorAt: scheduledAt ?? existing.scheduledAt,
+          }
+        : null;
+    } else if (scheduledAt !== undefined && existing.recurrence) {
+      recurrence = { ...existing.recurrence, anchorAt: scheduledAt };
+    }
+
     const updated = await this.taskRepository.update({
       id,
-      ...(dto.description !== undefined ? { description: dto.description } : {}),
-      ...(dto.scheduledAt !== undefined
-        ? { scheduledAt: new Date(dto.scheduledAt) }
+      ...(dto.description !== undefined
+        ? { description: dto.description }
         : {}),
-      ...(dto.recurrence !== undefined
-        ? { recurrence: dto.recurrence as Recurrence | null }
-        : {}),
+      ...(scheduledAt !== undefined ? { scheduledAt, snoozedUntil: null } : {}),
+      ...(recurrence !== undefined ? { recurrence } : {}),
     });
-    return toDto(updated);
+    return toDto(withOverdue(updated));
   }
 
   @Post(':id/complete')
   async complete(
     @CurrentUser() auth: AuthContext,
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
   ): Promise<TaskDto> {
     await this.requireOwnedTask(id, auth.userId);
     const task = await this.markCompleteUsecase.execute({ taskId: id });
-    return toDto(task);
+    return toDto(withOverdue(task));
   }
 
   @Post(':id/delay')
   async delay(
     @CurrentUser() auth: AuthContext,
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @Body() dto: DelayTaskDto,
   ): Promise<TaskDto> {
     await this.requireOwnedTask(id, auth.userId);
@@ -205,19 +274,22 @@ export class TaskController {
       taskId: id,
       delayMinutes: dto.minutes,
     });
-    return toDto(task);
+    return toDto(withOverdue(task));
   }
 
   @Delete(':id')
   async remove(
     @CurrentUser() auth: AuthContext,
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
   ): Promise<{ success: boolean }> {
     await this.requireOwnedTask(id, auth.userId);
     return this.deleteTaskUsecase.execute({ taskId: id });
   }
 
-  private async requireOwnedTask(taskId: string, userId: string): Promise<Task> {
+  private async requireOwnedTask(
+    taskId: string,
+    userId: string,
+  ): Promise<Task> {
     const task = await this.taskRepository.findById(taskId);
     if (!task) {
       throw new TaskNotFoundError(`Task ${taskId} not found`);
