@@ -9,7 +9,12 @@ import { TaskRepository } from '@domain/task/repository';
 import { Domain } from '@common/tokens';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
-import { format } from 'date-fns';
+import { formatForUser } from '@common/format-date';
+import { ignoreNotModified } from '../telegram-safe';
+import { toEnsureUserInput } from '../user-input';
+
+/** Short text shown as the toast after a button tap. */
+type Toast = string;
 
 @Injectable()
 export class CallbackHandler {
@@ -27,143 +32,131 @@ export class CallbackHandler {
     const data = ctx.callbackQuery?.data;
     if (data === undefined) return;
 
+    // Every callback is answered exactly once, here, so Telegram never
+    // shows a spinner until timeout and we never answer twice.
+    let toast: Toast;
     try {
-      if (data.startsWith('complete:')) {
-        await this.handleComplete(ctx, data);
-      } else if (data.startsWith('delay:')) {
-        await this.handleDelay(ctx, data);
-      } else if (data.startsWith('delete:')) {
-        await this.handleDelete(ctx, data);
-      } else if (data.startsWith('tz:')) {
-        await this.handleTimezone(ctx, data);
-      }
+      toast = await this.dispatch(ctx, data);
     } catch (error) {
       console.error('Failed to handle callback:', error);
-      await ctx.answerCallbackQuery({ text: '❌ Action failed' });
+      toast = '❌ Action failed';
     }
+    await ctx.answerCallbackQuery({ text: toast }).catch(() => undefined);
   }
 
-  private async handleComplete(ctx: Context, data: string): Promise<void> {
-    const taskId = data.replace('complete:', '');
+  private async dispatch(ctx: Context, data: string): Promise<Toast> {
+    if (data.startsWith('complete:')) return this.handleComplete(ctx, data);
+    if (data.startsWith('delay:')) return this.handleDelay(ctx, data);
+    if (data.startsWith('delete:')) return this.handleDelete(ctx, data);
+    if (data.startsWith('tz:')) return this.handleTimezone(ctx, data);
+    return '🤔 Unknown action';
+  }
 
-    // Verify user owns this task
-    const isAuthorized = await this.verifyTaskOwnership(ctx, taskId);
-    if (!isAuthorized) return;
+  private async handleComplete(ctx: Context, data: string): Promise<Toast> {
+    const taskId = data.replace('complete:', '');
+    const denied = await this.ownershipProblem(ctx, taskId);
+    if (denied) return denied;
 
     const task = await this.markCompleteUsecase.execute({ taskId });
-
     const repeat = describeRecurrence(task.recurrence);
+
     if (repeat) {
       // Recurring tasks advance instead of completing; tell the user when
       // the next occurrence is so "Done" doesn't look like it deleted it.
-      await ctx.answerCallbackQuery({ text: '✅ Done for this time!' });
-      await ctx.editMessageText(
-        `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${format(task.scheduledAt, 'PPpp')}`,
-        { parse_mode: 'HTML' },
+      await ignoreNotModified(
+        ctx.editMessageText(
+          `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${formatForUser(task.scheduledAt, task.timezone)}`,
+          { parse_mode: 'HTML' },
+        ),
       );
-      return;
+      return task.alreadyDone
+        ? '✅ Already done for this time'
+        : '✅ Done for this time!';
     }
 
-    await ctx.answerCallbackQuery({ text: '✅ Task marked as complete!' });
-    await ctx.editMessageText(
-      `✅ <b>Task completed!</b>\n\n📝 ${escapeHtml(task.description)}`,
-      { parse_mode: 'HTML' },
+    await ignoreNotModified(
+      ctx.editMessageText(
+        `✅ <b>Task completed!</b>\n\n📝 ${escapeHtml(task.description)}`,
+        { parse_mode: 'HTML' },
+      ),
     );
+    return task.alreadyDone
+      ? '✅ Already completed'
+      : '✅ Task marked as complete!';
   }
 
-  private async handleDelay(ctx: Context, data: string): Promise<void> {
+  private async handleDelay(ctx: Context, data: string): Promise<Toast> {
     const parts = data.split(':');
-    if (parts.length !== 3) {
-      await ctx.answerCallbackQuery({ text: '❌ Invalid delay format' });
-      return;
-    }
+    if (parts.length !== 3) return '❌ Invalid delay format';
 
     const taskId = parts[1] ?? '';
     const minutes = parseInt(parts[2] ?? '0', 10);
 
-    // Verify user owns this task
-    const isAuthorized = await this.verifyTaskOwnership(ctx, taskId);
-    if (!isAuthorized) return;
+    const denied = await this.ownershipProblem(ctx, taskId);
+    if (denied) return denied;
 
-    await this.delayTaskUsecase.execute({
-      taskId: taskId,
+    const task = await this.delayTaskUsecase.execute({
+      taskId,
       delayMinutes: minutes,
     });
 
-    await ctx.answerCallbackQuery({ text: `⏰ Delayed by ${minutes} minutes` });
-    await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+    await ignoreNotModified(
+      ctx.editMessageText(
+        `⏰ <b>Snoozed</b>\n\n📝 ${escapeHtml(task.description)}\n⏭ Reminding again at ${formatForUser(task.nextFireAt, task.timezone)}`,
+        { parse_mode: 'HTML' },
+      ),
+    );
+    return `⏰ Delayed by ${minutes} minutes`;
   }
 
-  private async handleDelete(ctx: Context, data: string): Promise<void> {
+  private async handleDelete(ctx: Context, data: string): Promise<Toast> {
     const taskId = data.replace('delete:', '');
-
-    // Verify user owns this task
-    const isAuthorized = await this.verifyTaskOwnership(ctx, taskId);
-    if (!isAuthorized) return;
+    const denied = await this.ownershipProblem(ctx, taskId);
+    if (denied) return denied;
 
     await this.deleteTaskUsecase.execute({ taskId });
 
-    await ctx.answerCallbackQuery({ text: '🗑️ Task deleted!' });
-    await ctx.editMessageText('🗑️ <b>Task deleted.</b>', {
-      parse_mode: 'HTML',
-    });
+    await ignoreNotModified(
+      ctx.editMessageText('🗑️ <b>Task deleted.</b>', { parse_mode: 'HTML' }),
+    );
+    return '🗑️ Task deleted!';
   }
 
-  private async handleTimezone(ctx: Context, data: string): Promise<void> {
-    if (ctx.from === undefined) return;
+  private async handleTimezone(ctx: Context, data: string): Promise<Toast> {
+    if (ctx.from === undefined) return '❌ Action failed';
 
     const timezone = data.replace('tz:', '');
-
-    // Ensure user exists
-    const user = await this.ensureUserUsecase.execute({
-      telegramUserId: ctx.from.id,
-      firstName: ctx.from.first_name,
-      lastName: ctx.from.last_name,
-      username: ctx.from.username,
-    });
-
-    // Update timezone
-    await this.updateTimezoneUsecase.execute({
-      userId: user.id,
-      timezone: timezone,
-    });
-
-    await ctx.answerCallbackQuery({ text: '✅ Timezone updated!' });
-    await ctx.editMessageText(
-      `✅ <b>Timezone updated!</b>\n\n🕐 New timezone: ${escapeHtml(timezone)}`,
-      { parse_mode: 'HTML' },
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
     );
+    await this.updateTimezoneUsecase.execute({ userId: user.id, timezone });
+
+    await ignoreNotModified(
+      ctx.editMessageText(
+        `✅ <b>Timezone updated!</b>\n\n🕐 New timezone: ${escapeHtml(timezone)}`,
+        { parse_mode: 'HTML' },
+      ),
+    );
+    return '✅ Timezone updated!';
   }
 
   /**
-   * Verify that the current user owns the task
-   * Returns true if authorized, false otherwise
+   * Returns a toast when the tapping user may not act on this task, null
+   * when they may.
    */
-  private async verifyTaskOwnership(
+  private async ownershipProblem(
     ctx: Context,
     taskId: string,
-  ): Promise<boolean> {
-    if (!ctx.from) return false;
+  ): Promise<Toast | null> {
+    if (!ctx.from) return '❌ Action failed';
 
     const task = await this.taskRepository.findById(taskId);
-    if (!task) {
-      await ctx.answerCallbackQuery({ text: '❌ Task not found' });
-      return false;
-    }
+    if (!task) return '❌ Task not found';
 
-    // Look up the DB user by Telegram ID and compare against task owner
-    const user = await this.ensureUserUsecase.execute({
-      telegramUserId: ctx.from.id,
-      firstName: ctx.from.first_name,
-      lastName: ctx.from.last_name,
-      username: ctx.from.username,
-    });
-
-    if (task.userId !== user.id) {
-      await ctx.answerCallbackQuery({ text: '❌ Unauthorized' });
-      return false;
-    }
-
-    return true;
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
+    );
+    if (task.userId !== user.id) return '❌ Unauthorized';
+    return null;
   }
 }

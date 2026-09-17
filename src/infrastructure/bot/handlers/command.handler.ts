@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { ListTasksUsecase } from '@usecases/task/list-tasks';
-import { format } from 'date-fns';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
-import type { Recurrence } from '@domain/task';
+import { formatForUserShort } from '@common/format-date';
+import type { Recurrence, Task } from '@domain/task';
+import { toEnsureUserInput } from '../user-input';
 
 /** Commands shown in Telegram's "/" menu. Keep in sync with /help. */
 export const BOT_COMMANDS = [
@@ -20,6 +21,16 @@ function repeatLine(recurrence: Recurrence | null | undefined): string {
   return label ? `\n   🔁 ${label}` : '';
 }
 
+/** "⏰ Thu 16 Apr, 11:00" plus "(snoozed until …)" when this occurrence was delayed. */
+function whenLine(
+  task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'timezone'>,
+): string {
+  const base = `⏰ ${formatForUserShort(task.scheduledAt, task.timezone)}`;
+  return task.snoozedUntil
+    ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, task.timezone)})`
+    : base;
+}
+
 @Injectable()
 export class CommandHandler {
   constructor(
@@ -31,13 +42,13 @@ export class CommandHandler {
     if (ctx.from === undefined) return;
 
     try {
-      // Ensure user exists
-      await this.ensureUserUsecase.execute({
-        telegramUserId: ctx.from.id,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        username: ctx.from.username,
-      });
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
+
+      const timezoneNote = user.timezone
+        ? `🕐 Your timezone: ${escapeHtml(user.timezone)} (change it with /settings)`
+        : `⚠️ <b>Set your timezone first</b> so times are right: /settings, or open the Mini App and it is detected automatically.`;
 
       await ctx.reply(
         `👋 <b>Welcome to Remy, your reminder assistant.</b>\n\n` +
@@ -50,7 +61,8 @@ export class CommandHandler {
           `/list – view your reminders\n` +
           `/delete – delete a reminder\n` +
           `/settings – set your timezone\n` +
-          `/help – show help`,
+          `/help – show help\n\n` +
+          timezoneNote,
         { parse_mode: 'HTML' },
       );
     } catch (error) {
@@ -64,12 +76,9 @@ export class CommandHandler {
 
     try {
       // Ensure user exists
-      const user = await this.ensureUserUsecase.execute({
-        telegramUserId: ctx.from.id,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        username: ctx.from.username,
-      });
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
 
       // Get tasks
       const result = await this.listTasksUsecase.execute({
@@ -93,7 +102,7 @@ export class CommandHandler {
           const emoji = task.isOverdue ? '🔴' : '🟢';
           const status = task.isOverdue ? '(Overdue)' : '';
           message += `${emoji} <b>${escapeHtml(task.description)}</b>\n`;
-          message += `   ⏰ ${format(task.scheduledAt, 'PPpp')} ${status}${repeatLine(task.recurrence)}\n\n`;
+          message += `   ${whenLine(task)} ${status}${repeatLine(task.recurrence)}\n\n`;
         }
         await ctx.reply(message, { parse_mode: 'HTML' });
       } else {
@@ -104,7 +113,7 @@ export class CommandHandler {
       for (const task of tasksWithButtons) {
         const emoji = task.isOverdue ? '🔴' : '🟢';
         const status = task.isOverdue ? ' (Overdue)' : '';
-        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n⏰ ${format(task.scheduledAt, 'PPpp')}${status}${repeatLine(task.recurrence).replace('\n   ', '\n')}`;
+        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n${whenLine(task)}${status}${repeatLine(task.recurrence).replace('\n   ', '\n')}`;
 
         const keyboard = new InlineKeyboard()
           .text('✅ Done', `complete:${task.id}`)
@@ -124,12 +133,9 @@ export class CommandHandler {
 
     try {
       // Ensure user exists
-      const user = await this.ensureUserUsecase.execute({
-        telegramUserId: ctx.from.id,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        username: ctx.from.username,
-      });
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
 
       // Get tasks
       const result = await this.listTasksUsecase.execute({
@@ -163,12 +169,9 @@ export class CommandHandler {
 
     try {
       // Ensure user exists
-      const user = await this.ensureUserUsecase.execute({
-        telegramUserId: ctx.from.id,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        username: ctx.from.username,
-      });
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
 
       const currentTimezone = user.timezone ?? 'Not set (using UTC)';
 
@@ -187,7 +190,7 @@ export class CommandHandler {
         .text('🇦🇺 Australia/Sydney', 'tz:Australia/Sydney');
 
       await ctx.reply(
-        `⚙️ <b>Settings</b>\n\n🕐 Current timezone: ${escapeHtml(currentTimezone)}\n\nSelect your timezone:`,
+        `⚙️ <b>Settings</b>\n\n🕐 Current timezone: ${escapeHtml(currentTimezone)}\n\nPick one below, or open the Mini App: it detects your timezone automatically and lets you search any zone.`,
         { reply_markup: keyboard, parse_mode: 'HTML' },
       );
     } catch (error) {

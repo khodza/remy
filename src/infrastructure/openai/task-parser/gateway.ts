@@ -8,8 +8,8 @@ import {
 } from '@domain/ai/gateway/task-parser/types';
 import { ParsingFailedError } from '@domain/ai/errors';
 import type { Recurrence, RecurrenceType } from '@domain/task';
-import { parseISO } from 'date-fns';
-import { formatInTimeZone } from 'date-fns-tz';
+import { isValid, parseISO } from 'date-fns';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 
 const RECURRENCE_TYPES: RecurrenceType[] = [
   'daily',
@@ -25,28 +25,30 @@ export class TaskParserGatewayImpl implements TaskParserGateway {
   private readonly client: OpenAI;
 
   constructor() {
-    this.client = new OpenAI({ apiKey: getEnv().OPENAI_API_KEY });
+    // Parsing is one short completion; don't let the SDK default (10 min,
+    // 2 retries) stall a chat reply or a Mini App request.
+    this.client = new OpenAI({
+      apiKey: getEnv().OPENAI_API_KEY,
+      timeout: 30_000,
+      maxRetries: 1,
+    });
   }
 
   public async parse(input: TaskParserInput): Promise<TaskParserOutput> {
     try {
       const now = new Date();
       const userTimezone = input.userTimezone ?? 'UTC';
-      const currentTimeInUserTz = formatInTimeZone(
+      const nowLocal = formatInTimeZone(
         now,
         userTimezone,
-        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss",
       );
-      const currentOffset = formatInTimeZone(now, userTimezone, 'XXX');
       const weekday = formatInTimeZone(now, userTimezone, 'EEEE');
-      const dateISO = formatInTimeZone(now, userTimezone, 'yyyy-MM-dd');
 
       const systemPrompt = buildSystemPrompt({
-        currentTimeInUserTz,
-        currentOffset,
+        nowLocal,
         userTimezone,
         weekday,
-        dateISO,
       });
 
       const response = await this.client.chat.completions.create({
@@ -64,39 +66,60 @@ export class TaskParserGatewayImpl implements TaskParserGateway {
         throw new Error('No response from OpenAI');
       }
 
-      const parsed: unknown = JSON.parse(content);
+      const parsed = interpretModelOutput(JSON.parse(content), userTimezone);
 
-      if (
-        typeof parsed !== 'object' ||
-        parsed === null ||
-        !('description' in parsed) ||
-        !('scheduledAt' in parsed) ||
-        typeof (parsed as Record<string, unknown>)['description'] !==
-          'string' ||
-        typeof (parsed as Record<string, unknown>)['scheduledAt'] !== 'string'
-      ) {
-        throw new Error('Invalid response format from OpenAI');
-      }
-
-      const obj = parsed as Record<string, unknown>;
-      const description = obj['description'] as string;
-      const scheduledAt = obj['scheduledAt'] as string;
-      const recurrence = extractRecurrence(obj['recurrence']);
-
-      const scheduledDate = parseISO(scheduledAt);
       this.logger.debug(
-        `parsed "${input.text}" @ ${currentTimeInUserTz} → "${description}" @ ${scheduledAt} recurrence=${JSON.stringify(recurrence)}`,
+        `parsed (${userTimezone}, now ${nowLocal}) → "${parsed.description}" @ ${parsed.scheduledAt.toISOString()} recurrence=${JSON.stringify(parsed.recurrence)}`,
       );
 
-      return {
-        description,
-        scheduledAt: scheduledDate,
-        recurrence,
-      };
+      return parsed;
     } catch (error) {
       throw new ParsingFailedError('Failed to parse task from text', error);
     }
   }
+}
+
+/**
+ * Validates the model's JSON and converts its wall-clock time (in the
+ * user's zone) into an absolute instant. The model never has to know
+ * UTC offsets, which it gets wrong around DST switches.
+ */
+export function interpretModelOutput(
+  raw: unknown,
+  userTimezone: string,
+): TaskParserOutput {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error('Model output is not an object');
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const description = obj['description'];
+  if (typeof description !== 'string' || description.trim() === '') {
+    throw new Error('Model output has no description');
+  }
+
+  const local = obj['scheduledAtLocal'];
+  const withOffset = obj['scheduledAt'];
+  let scheduledAt: Date;
+  if (typeof local === 'string') {
+    scheduledAt = fromZonedTime(local, userTimezone);
+  } else if (typeof withOffset === 'string') {
+    // Fallback for older prompt outputs that included an offset.
+    scheduledAt = parseISO(withOffset);
+  } else {
+    throw new Error('Model output has no scheduledAtLocal');
+  }
+  if (!isValid(scheduledAt)) {
+    throw new Error(
+      `Model output has an invalid time: ${String(local ?? withOffset)}`,
+    );
+  }
+
+  return {
+    description: description.trim(),
+    scheduledAt,
+    recurrence: extractRecurrence(obj['recurrence']),
+  };
 }
 
 function extractRecurrence(value: unknown): Recurrence | null {
@@ -108,62 +131,53 @@ function extractRecurrence(value: unknown): Recurrence | null {
   if (!RECURRENCE_TYPES.includes(type as RecurrenceType)) return null;
 
   const recurrence: Recurrence = { type: type as RecurrenceType };
-  const interval = obj['intervalDays'];
-  if (
-    typeof interval === 'number' &&
-    Number.isFinite(interval) &&
-    interval >= 1
-  ) {
-    recurrence.intervalDays = Math.floor(interval);
-  }
-  if (
-    recurrence.type === 'every_n_days' &&
-    recurrence.intervalDays === undefined
-  ) {
-    // Model asked for interval recurrence without telling us how often —
-    // default to 1 so the task still works.
-    recurrence.intervalDays = 1;
+  if (recurrence.type === 'every_n_days') {
+    const interval = obj['intervalDays'];
+    recurrence.intervalDays =
+      typeof interval === 'number' && Number.isFinite(interval) && interval >= 1
+        ? Math.floor(interval)
+        : 1;
   }
   return recurrence;
 }
 
 function buildSystemPrompt(args: {
-  currentTimeInUserTz: string;
-  currentOffset: string;
+  nowLocal: string;
   userTimezone: string;
   weekday: string;
-  dateISO: string;
 }): string {
-  const { currentTimeInUserTz, currentOffset, userTimezone, weekday, dateISO } =
-    args;
+  const { nowLocal, userTimezone, weekday } = args;
 
   return `You convert a user's natural-language reminder request into JSON.
 
 CONTEXT
-- Current local time: ${currentTimeInUserTz} (${weekday}, ${dateISO})
+- Current local date and time: ${nowLocal} (${weekday})
 - User timezone: ${userTimezone}
-- Timezone offset: ${currentOffset}
+All times you output are LOCAL wall-clock times in that timezone. Never add
+a UTC offset or a "Z"; the server converts.
 
 OUTPUT
 Return a single JSON object with these fields:
 {
   "description": "<reminder text with action words like 'remind me to' stripped>",
-  "scheduledAt": "<ISO 8601 datetime in ${userTimezone}, with offset ${currentOffset}>",
+  "scheduledAtLocal": "<YYYY-MM-DDTHH:mm:ss, local wall-clock time>",
   "recurrence": null OR {
     "type": "daily" | "weekdays" | "weekly" | "monthly" | "every_n_days",
     "intervalDays": <positive integer, ONLY when type is "every_n_days">
   }
 }
 
-RULES for scheduledAt
+RULES for scheduledAtLocal
 1. RELATIVE durations ("in X minutes/hours/days", "after 30 mins", "in 2 hours"):
    ADD the exact duration to the current local time. Do not round.
 2. ABSOLUTE times ("at 3pm", "at 17:00"): use that time TODAY if still in the
-   future, otherwise TOMORROW.
+   future, otherwise TOMORROW. A bare hour like "at 5" with no am/pm means the
+   next occurrence of 5 (morning or evening), whichever comes first and is in
+   the future; if that is before 07:00 prefer the evening.
 3. RELATIVE dates ("tomorrow", "next Monday", "this weekend"): keep any time
    of day the user specified; otherwise default to 09:00.
-4. Always use offset ${currentOffset} in the output.
-5. scheduledAt must be strictly in the future relative to the current local time.
+4. scheduledAtLocal must be strictly in the future relative to the current
+   local time.
 
 RULES for recurrence
 - "every day", "daily", "each day" → {"type": "daily"}
@@ -172,24 +186,21 @@ RULES for recurrence
 - "every month", "monthly", "the 1st of each month" → {"type": "monthly"}
 - "every 3 days", "every N days" (N > 1) → {"type": "every_n_days", "intervalDays": N}
 - Otherwise → null
-- scheduledAt is the FIRST occurrence; the client advances subsequent dates.
+- scheduledAtLocal is the FIRST occurrence; the server advances subsequent dates.
 
-WORKED EXAMPLES (assume current time ${currentTimeInUserTz})
+WORKED EXAMPLES (assume current local time ${nowLocal})
 - "Call mom after 30 mins"
-  → scheduledAt = currentTime + 30 minutes, recurrence = null
+  → scheduledAtLocal = current time + 30 minutes, recurrence = null
 - "Buy milk in 2 hours"
-  → scheduledAt = currentTime + 2 hours, recurrence = null
+  → scheduledAtLocal = current time + 2 hours, recurrence = null
 - "Pick up laundry at 6pm"
-  → scheduledAt = today at 18:00:00${currentOffset}, recurrence = null
+  → scheduledAtLocal = today at 18:00:00 (or tomorrow if 18:00 has passed), recurrence = null
 - "Stand-up every weekday at 9am"
-  → scheduledAt = next weekday at 09:00:00${currentOffset},
-    recurrence = {"type": "weekdays"}
+  → scheduledAtLocal = next weekday at 09:00:00, recurrence = {"type": "weekdays"}
 - "Water plants every 3 days"
-  → scheduledAt = tomorrow at 09:00:00${currentOffset},
-    recurrence = {"type": "every_n_days", "intervalDays": 3}
+  → scheduledAtLocal = tomorrow at 09:00:00, recurrence = {"type": "every_n_days", "intervalDays": 3}
 - "Take meds daily at 8am"
-  → scheduledAt = next 08:00:00${currentOffset},
-    recurrence = {"type": "daily"}
+  → scheduledAtLocal = next 08:00:00, recurrence = {"type": "daily"}
 
 Do the arithmetic carefully. Show no reasoning — return only the JSON object.`;
 }

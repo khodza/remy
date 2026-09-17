@@ -5,6 +5,8 @@ export type EnsureUserInput = {
   firstName: string;
   lastName?: string;
   username?: string;
+  /** Applied only when the user is created. */
+  timezone?: string;
 };
 
 export type EnsureUserOutput = User;

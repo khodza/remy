@@ -10,10 +10,14 @@ import {
   type ProcessVoiceMessageOutput,
 } from '@usecases/task/process-voice-message';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
-import { format } from 'date-fns';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
+import { formatForUser } from '@common/format-date';
 import { getEnv } from '@common/config';
+import { resolveTimezone, toEnsureUserInput } from '../user-input';
+
+/** Telegram's own bot-API download limit. */
+const VOICE_MAX_BYTES = 20 * 1024 * 1024;
 
 @Injectable()
 export class MessageHandler {
@@ -32,20 +36,15 @@ export class MessageHandler {
 
     let result: ProcessTextMessageOutput;
     try {
-      // Ensure user exists
-      const user = await this.ensureUserUsecase.execute({
-        telegramUserId: ctx.from.id,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        username: ctx.from.username,
-      });
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
 
-      // Process message
       result = await this.processTextMessageUsecase.execute({
         userId: user.id,
         telegramChatId: ctx.chat?.id ?? ctx.from.id,
         text: text,
-        userTimezone: user.timezone ?? undefined,
+        userTimezone: resolveTimezone(user),
       });
     } catch (error) {
       console.error('Failed to process text message:', error);
@@ -58,7 +57,7 @@ export class MessageHandler {
     // Kept outside the try: the task is already saved, so a failed
     // confirmation must not tell the user to retry (that duplicates it).
     await ctx.reply(
-      `✅ <b>Task created!</b>\n\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}${recurrenceLine(result.recurrence)}`,
+      `✅ <b>Task created!</b>\n\n📝 ${escapeHtml(result.description)}\n⏰ ${formatForUser(result.scheduledAt, result.timezone)}${recurrenceLine(result.recurrence)}`,
       { parse_mode: 'HTML' },
     );
   }
@@ -67,34 +66,44 @@ export class MessageHandler {
     const voice = ctx.message?.voice;
     if (voice === undefined || ctx.from === undefined) return;
 
+    if (voice.file_size !== undefined && voice.file_size > VOICE_MAX_BYTES) {
+      await ctx.reply('❌ That voice message is too large (max 20 MB).');
+      return;
+    }
+
     let result: ProcessVoiceMessageOutput;
     try {
       await ctx.reply('🎤 Processing your voice message...');
 
-      // Download voice file
       const file = await ctx.getFile();
+      if (!file.file_path) {
+        throw new Error('Telegram returned no file_path for the voice message');
+      }
       const token = getEnv().TELEGRAM_BOT_TOKEN;
 
       const response = await fetch(
         `https://api.telegram.org/file/bot${token}/${file.file_path}`,
       );
+      if (!response.ok) {
+        throw new Error(
+          `Voice download failed: ${response.status} ${response.statusText}`,
+        );
+      }
       const audioBuffer = Buffer.from(await response.arrayBuffer());
+      if (audioBuffer.byteLength === 0) {
+        throw new Error('Voice download returned an empty body');
+      }
 
-      // Ensure user exists
-      const user = await this.ensureUserUsecase.execute({
-        telegramUserId: ctx.from.id,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        username: ctx.from.username,
-      });
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
 
-      // Process voice message
       result = await this.processVoiceMessageUsecase.execute({
         userId: user.id,
         telegramChatId: ctx.chat?.id ?? ctx.from.id,
         audioFileBuffer: audioBuffer,
         mimeType: voice.mime_type ?? 'audio/ogg',
-        userTimezone: user.timezone ?? undefined,
+        userTimezone: resolveTimezone(user),
       });
     } catch (error) {
       console.error('Failed to process voice message:', error);
@@ -105,7 +114,7 @@ export class MessageHandler {
     }
 
     await ctx.reply(
-      `✅ <b>Task created from voice!</b>\n\n🎤 Transcribed: "${escapeHtml(result.transcribedText)}"\n📝 ${escapeHtml(result.description)}\n⏰ ${format(result.scheduledAt, 'PPpp')}${recurrenceLine(result.recurrence)}`,
+      `✅ <b>Task created from voice!</b>\n\n🎤 Transcribed: "${escapeHtml(result.transcribedText)}"\n📝 ${escapeHtml(result.description)}\n⏰ ${formatForUser(result.scheduledAt, result.timezone)}${recurrenceLine(result.recurrence)}`,
       { parse_mode: 'HTML' },
     );
   }

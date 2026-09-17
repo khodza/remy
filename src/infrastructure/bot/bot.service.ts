@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { Bot } from 'grammy';
+import { run, type RunnerHandle } from '@grammyjs/runner';
 import { MessageHandler } from './handlers/message.handler';
 import { CallbackHandler } from './handlers/callback.handler';
 import { BOT_COMMANDS, CommandHandler } from './handlers/command.handler';
@@ -9,6 +10,7 @@ import { getEnv } from '@common/config';
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private bot: Bot;
+  private runner: RunnerHandle | undefined;
   private messageHandler!: MessageHandler;
   private callbackHandler!: CallbackHandler;
   private commandHandler!: CommandHandler;
@@ -35,18 +37,29 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       console.error('⚠️  Failed to register bot commands:', error);
     });
 
-    // Start bot in background (don't await - it runs a long-polling loop)
-    this.bot.start().catch((error) => {
-      console.error('❌ Failed to start Telegram bot:', error);
+    this.startPolling();
+    console.log('✅ Telegram bot polling in background...');
+  }
+
+  /**
+   * Long polling via @grammyjs/runner: updates are handled concurrently, so
+   * a slow voice note (download + Whisper + GPT) no longer blocks button
+   * taps until they expire. Overridable for tests.
+   */
+  protected startPolling(): void {
+    this.runner = run(this.bot);
+    this.runner.task()?.catch((error: unknown) => {
+      console.error('❌ Telegram bot polling stopped:', error);
       console.log(
         '⚠️  Bot will not respond to messages, but scheduler will still run',
       );
     });
-    console.log('✅ Telegram bot starting in background...');
   }
 
   public async onModuleDestroy(): Promise<void> {
-    await this.bot.stop();
+    if (this.runner?.isRunning()) {
+      await this.runner.stop();
+    }
     console.log('Telegram bot stopped');
   }
 

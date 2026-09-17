@@ -1,4 +1,4 @@
-import { Bot, BotError } from 'grammy';
+import { BotError } from 'grammy';
 import type { Update, UserFromGetMe } from 'grammy/types';
 import type { ModuleRef } from '@nestjs/core';
 import { TelegramBotService } from './bot.service';
@@ -20,7 +20,13 @@ describe('TelegramBotService', () => {
 
   beforeEach(() => {
     process.env['TELEGRAM_BOT_TOKEN'] = '123456:TEST';
-    jest.spyOn(Bot.prototype, 'start').mockResolvedValue(undefined);
+    // Never actually poll Telegram from a unit test.
+    jest
+      .spyOn(
+        TelegramBotService.prototype as unknown as { startPolling: () => void },
+        'startPolling',
+      )
+      .mockImplementation(() => undefined);
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });

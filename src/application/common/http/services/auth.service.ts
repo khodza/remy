@@ -35,11 +35,13 @@ export class AuthService {
       throw new InvalidInputError('initData does not contain a user');
     }
 
+    const ownerTimezone = getEnv().OWNER_TIMEZONE;
     const user = await this.ensureUserUsecase.execute({
       telegramUserId: tgUser.id,
       firstName: tgUser.first_name,
       ...(tgUser.last_name ? { lastName: tgUser.last_name } : {}),
       ...(tgUser.username ? { username: tgUser.username } : {}),
+      ...(ownerTimezone ? { timezone: ownerTimezone } : {}),
     });
 
     const token = await this.jwtService.signAsync(

@@ -29,6 +29,7 @@ export class EnsureUserUsecase {
         firstName: input.firstName,
         lastName: input.lastName,
         username: input.username,
+        timezone: input.timezone,
       });
 
       return user;
