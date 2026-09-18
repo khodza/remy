@@ -33,6 +33,8 @@ prints the full list of problems (`src/common/config/env.ts` is the schema).
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | eslint with autofix |
 | `npm run build` | compile to `build/` (SWC) |
+| `npm run seed` | insert a realistic sample day for the owner (`-- --reset`, `-- --dry-run`) |
+| `npm run contract:sync` / `contract:check` | regenerate / verify the frontend's copy of the HTTP contract |
 | `npm run start:prod:api` | run the compiled build |
 
 A pre-commit hook runs eslint + prettier on staged `.ts` files.
@@ -72,6 +74,16 @@ src/
 Path aliases: `@domain/*`, `@usecases/*`, `@infra/*`, `@application/*`,
 `@common/*`.
 
+## API contract
+
+Every request and response shape lives in one zod file,
+[`src/contract/remy-contract.ts`](src/contract/remy-contract.ts): tasks (with
+notes, priority, category, source, todos without a time), views
+(`GET /tasks?view=today|upcoming|inbox|done`), structured create, reopen,
+absolute snooze, settings and categories. The backend validates with it and
+the frontend parses with a generated copy, so drift is a failing check rather
+than a runtime surprise.
+
 ## Timezones
 
 Every task stores the IANA zone it was created in. New users get
@@ -104,10 +116,18 @@ See [`.env.example`](.env.example); every variable is documented there.
 
 ## Tests
 
-Unit tests live next to the code (`*.spec.ts`) and use mocks only; there is no
-database or network in the suite. `test/setup-env.ts` provides a baseline
-environment. `npm run test:e2e` is wired (`test/jest-e2e.json`) but there are
-no e2e specs yet.
+Three layers, all offline:
+
+| Command | What it proves |
+|---|---|
+| `npm test` | Unit tests next to the code (`*.spec.ts`), mocks only, ~5 s. Part of `npm run check`. |
+| `npm run test:int` | `TaskRepositoryImpl` against a real in-memory MongoDB: the atomic reminder claim (incl. 8 concurrent claimers), snooze re-arming, retry hold, view filters, legacy backfill. |
+| `npm run test:e2e` | The real `AppModule` over HTTP (supertest) against in-memory MongoDB with only Telegram stubbed: mock login + owner lock, settings, categories, structured create, views, patch/snooze/delay/complete/reopen/delete. Every response is parsed with the contract. |
+
+The first `test:int` / `test:e2e` run downloads a MongoDB binary
+(mongodb-memory-server). `test/setup-env.ts` provides the baseline
+environment; `test/factories.ts` has `makeTask`, `makeUser` and in-memory
+repository mocks.
 
 ## Roadmap
 

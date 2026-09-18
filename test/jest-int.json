@@ -6,7 +6,11 @@
   ],
   "rootDir": "..",
   "testEnvironment": "node",
-  "testRegex": ".e2e-spec.ts$",
+  "testRegex": ".int-spec.ts$",
+  "testTimeout": 180000,
+  "setupFiles": [
+    "<rootDir>/test/setup-env.ts"
+  ],
   "transform": {
     "^.+\\.(t|j)s$": [
       "ts-jest",
@@ -19,9 +23,6 @@
       }
     ]
   },
-  "setupFiles": [
-    "<rootDir>/test/setup-env.ts"
-  ],
   "moduleNameMapper": {
     "^@application/(.*)$": "<rootDir>/src/application/$1",
     "^@domain/(.*)$": "<rootDir>/src/domain/$1",
@@ -30,6 +31,5 @@
     "^@common/(.*)$": "<rootDir>/src/common/$1",
     "^@contract/(.*)$": "<rootDir>/src/contract/$1",
     "^@test/(.*)$": "<rootDir>/test/$1"
-  },
-  "testTimeout": 180000
+  }
 }

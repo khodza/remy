@@ -16,9 +16,13 @@ npm run dev            # docker compose mongo + API watch mode (:3000)
 npm run dev:api        # API watch mode only
 npm run check          # typecheck + lint + tests — run before finishing any task
 npm test               # jest unit tests (mocks only, no DB/network)
+npm run test:int       # repository vs real in-memory MongoDB (claim query, views, backfill)
+npm run test:e2e       # real AppModule over HTTP vs in-memory MongoDB, contract-checked
 npm run typecheck      # tsc --noEmit
 npm run lint           # eslint --fix
 npm run build          # SWC build into build/ ; start with npm run start:prod:api
+npm run seed           # sample day for the owner (--reset, --dry-run); needs OWNER_TELEGRAM_ID
+npm run contract:sync  # regenerate the frontend's copy of the HTTP contract
 ```
 
 Pre-commit runs eslint + prettier on staged `.ts` via husky/lint-staged.
@@ -45,19 +49,46 @@ Flow: message → `MessageHandler` → `ProcessTextMessageUsecase` →
 `SendPendingRemindersUsecase` → `NotificationGateway`. Buttons →
 `CallbackHandler`.
 
+## The HTTP contract
+
+`src/contract/remy-contract.ts` is the single source of truth for every
+request and response shape (zod, no other imports). The backend validates
+bodies with it (`ZodValidationPipe`) and maps domain objects to `wire.*`
+types (`http/mappers`); controller specs assert responses with
+`wire.Task.parse(...)`. The frontend gets a verbatim generated copy:
+
+```bash
+npm run contract:sync    # writes ../remy-webapp/src/shared/api/contract.gen.ts
+npm run contract:check   # fails if that copy is stale (part of npm run check)
+```
+
+Any change to an endpoint = edit the contract first, bump `CONTRACT_VERSION`
+when it is breaking, run `contract:sync`, and mention it in the final message.
+The domain layer must not import the contract; the HTTP layer maps.
+
 ## Rules
 
 - Keep layers clean: use cases depend on domain interfaces only; grammY and
   mongoose types never leak into domain or use cases.
-- Every use case gets a spec with mocked repositories/gateways. Run
-  `npm run check` before you finish.
+- Every use case gets a spec with mocked repositories/gateways
+  (`@test/factories`). Anything that changes a Mongo query or adds an
+  endpoint also gets a case in `test/task-repository.int-spec.ts` or
+  `test/api.e2e-spec.ts`: mocks cannot catch driver behaviour (the Mongoose 9
+  `updatePipeline` requirement was found this way). Run `npm run check`, and
+  `test:int` + `test:e2e` when persistence or HTTP changed, before you finish.
 - Bot messages use `parse_mode: 'HTML'` and `escapeHtml()` from
   `infrastructure/bot/html.ts` for any user-provided text. Never Markdown.
 - Every time shown to the user goes through `formatForUser` /
   `formatForUserShort` (`common/format-date.ts`) with the task's `timezone`.
   Never call plain date-fns `format()` for user-facing text (it formats in
   the server's zone).
-- Task model: `scheduledAt` is the current occurrence (series time for
+- Task model v2: `description` is the title, `notes` the body; a task with
+  `scheduledAt: null` is a **todo** (`kind` is derived, never stored) and is
+  never claimed by the scheduler; `priority` low/normal/high; `categoryId`
+  points into `user.categories`; `source` records where it came from;
+  `completedAt` for one-shots, `completions[]` for recurring Done taps;
+  `leadMinutes` is stored but its delivery lands in Phase 3.
+- `scheduledAt` is the current occurrence (series time for
   recurring tasks); `snoozedUntil` moves only the current occurrence;
   `nextFireAt = snoozedUntil ?? scheduledAt` is derived in the repository and
   is what the scheduler queries; `recurrence.anchorAt` never moves.

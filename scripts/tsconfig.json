@@ -1,0 +1,23 @@
+{
+  "//": "ts-node cannot read the root tsconfig (array `extends`), so scripts get their own.",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": "..",
+    "paths": {
+      "@application/*": ["src/application/*"],
+      "@domain/*": ["src/domain/*"],
+      "@infra/*": ["src/infrastructure/*"],
+      "@usecases/*": ["src/usecases/*"],
+      "@common/*": ["src/common/*"],
+      "@contract/*": ["src/contract/*"]
+    }
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts"]
+}
