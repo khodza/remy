@@ -92,7 +92,7 @@ export class SendPendingRemindersUsecase {
     try {
       const tasks = await this.taskRepository.findOverdueRecurring(now);
       for (const task of tasks) {
-        if (!task.recurrence) continue;
+        if (!task.recurrence || task.scheduledAt === null) continue;
         const latest = computeLatestOccurrence(
           task.scheduledAt,
           task.recurrence,

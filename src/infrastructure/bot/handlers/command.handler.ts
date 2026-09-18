@@ -21,10 +21,11 @@ function repeatLine(recurrence: Recurrence | null | undefined): string {
   return label ? `\n   🔁 ${label}` : '';
 }
 
-/** "⏰ Thu 16 Apr, 11:00" plus "(snoozed until …)" when this occurrence was delayed. */
+/** "⏰ Thu 16 Apr, 11:00", "(snoozed until …)" when delayed, "📥 no date" for todos. */
 function whenLine(
   task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'timezone'>,
 ): string {
+  if (task.scheduledAt === null) return '📥 no date';
   const base = `⏰ ${formatForUserShort(task.scheduledAt, task.timezone)}`;
   return task.snoozedUntil
     ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, task.timezone)})`

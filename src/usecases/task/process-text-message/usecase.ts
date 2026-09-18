@@ -34,7 +34,6 @@ export class ProcessTextMessageUsecase {
         ? { ...parsed.recurrence, anchorAt: parsed.scheduledAt }
         : null;
 
-      // Create task
       const task = await this.taskRepository.create({
         userId: input.userId,
         telegramChatId: input.telegramChatId,
@@ -42,12 +41,18 @@ export class ProcessTextMessageUsecase {
         scheduledAt: parsed.scheduledAt,
         timezone,
         recurrence,
+        source: {
+          type: input.source?.type ?? 'text',
+          originalText: input.text,
+          messageId: input.source?.messageId ?? null,
+          forwardedFrom: input.source?.forwardedFrom ?? null,
+        },
       });
 
       return {
         taskId: task.id,
         description: task.description,
-        scheduledAt: task.scheduledAt,
+        scheduledAt: parsed.scheduledAt,
         timezone: task.timezone,
         recurrence: task.recurrence ?? null,
       };

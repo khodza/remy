@@ -3,6 +3,7 @@ import type { UserRepository } from '@domain/user/repository';
 import type { User } from '@domain/user';
 import { InvalidInputError } from '@common/errors';
 import { FailedToSaveUserError } from '@domain/user/errors';
+import { DEFAULT_USER_SETTINGS } from '@domain/user';
 
 describe('UpdateTimezoneUsecase', () => {
   let usecase: UpdateTimezoneUsecase;
@@ -17,6 +18,8 @@ describe('UpdateTimezoneUsecase', () => {
     lastName: null,
     username: null,
     timezone: 'UTC',
+    settings: structuredClone(DEFAULT_USER_SETTINGS),
+    categories: null,
     createdAt: now,
     updatedAt: now,
   };

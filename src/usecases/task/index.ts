@@ -5,3 +5,7 @@ export * from './delay-task';
 export * from './list-tasks';
 export * from './delete-task';
 export * from './send-pending-reminders';
+export * from './create-structured-task';
+export * from './update-task';
+export * from './reopen-task';
+export * from './snooze-task';

@@ -45,6 +45,12 @@ export class MessageHandler {
         telegramChatId: ctx.chat?.id ?? ctx.from.id,
         text: text,
         userTimezone: resolveTimezone(user),
+        source: {
+          type: 'text',
+          ...(ctx.message?.message_id !== undefined
+            ? { messageId: ctx.message.message_id }
+            : {}),
+        },
       });
     } catch (error) {
       console.error('Failed to process text message:', error);
@@ -104,6 +110,10 @@ export class MessageHandler {
         audioFileBuffer: audioBuffer,
         mimeType: voice.mime_type ?? 'audio/ogg',
         userTimezone: resolveTimezone(user),
+        sourceType: 'voice',
+        ...(ctx.message?.message_id !== undefined
+          ? { messageId: ctx.message.message_id }
+          : {}),
       });
     } catch (error) {
       console.error('Failed to process voice message:', error);

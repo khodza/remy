@@ -52,6 +52,12 @@ describe('ProcessTextMessageUsecase', () => {
       scheduledAt,
       timezone: 'UTC',
       recurrence: null,
+      source: {
+        type: 'text',
+        originalText: 'Buy groceries at 3pm',
+        messageId: null,
+        forwardedFrom: null,
+      },
     });
     expect(result).toEqual({
       taskId: 'task-1',

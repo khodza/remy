@@ -36,6 +36,7 @@ describe('MarkCompleteUsecase', () => {
     expect(taskRepository.update).toHaveBeenCalledWith({
       id: 'task-1',
       status: TaskStatus.Completed,
+      completedAt: now,
     });
     expect(result.status).toBe(TaskStatus.Completed);
     expect(result.alreadyDone).toBe(false);
@@ -68,6 +69,11 @@ describe('MarkCompleteUsecase', () => {
       scheduledAt: new Date('2026-04-17T09:00:00Z'),
       snoozedUntil: null,
       status: TaskStatus.Pending,
+      // The completed occurrence is recorded in the task's history.
+      pushCompletion: {
+        at: now,
+        occurrenceAt: new Date('2026-04-16T09:00:00Z'),
+      },
     });
     expect(result.alreadyDone).toBe(false);
   });
@@ -127,6 +133,23 @@ describe('MarkCompleteUsecase', () => {
 
     const called = taskRepository.update.mock.calls[0]?.[0];
     expect(called?.scheduledAt).toEqual(new Date('2026-04-29T09:00:00Z'));
+  });
+
+  it('completes a todo (no time) like a one-shot task', async () => {
+    const todo = makeTask({ scheduledAt: null });
+    taskRepository.findById.mockResolvedValue(todo);
+    taskRepository.update.mockResolvedValue({
+      ...todo,
+      status: TaskStatus.Completed,
+    });
+
+    await usecase.execute({ taskId: 'task-1' });
+
+    expect(taskRepository.update).toHaveBeenCalledWith({
+      id: 'task-1',
+      status: TaskStatus.Completed,
+      completedAt: now,
+    });
   });
 
   it('throws TaskNotFoundError when the task does not exist', async () => {

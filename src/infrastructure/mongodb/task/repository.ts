@@ -9,8 +9,12 @@ import {
   TaskStatus,
   Recurrence,
   ClaimedReminder,
+  TaskFilter,
+  TaskSource,
+  Priority,
+  isScheduled,
 } from '@domain/task/repository';
-import { TaskDocument, RecurrenceSubdoc } from './document';
+import { TaskDocument, RecurrenceSubdoc, SourceSubdoc } from './document';
 import { Collections } from '../collections';
 import {
   TaskNotFoundError,
@@ -21,6 +25,12 @@ import { ApplicationError } from '@domain/error';
 import { getEnv } from '@common/config';
 
 const LEGACY_TIMEZONE_FALLBACK = 'UTC';
+const LEGACY_SOURCE: TaskSource = {
+  type: 'text',
+  originalText: null,
+  messageId: null,
+  forwardedFrom: null,
+};
 
 @Injectable()
 export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
@@ -32,13 +42,30 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
   ) {}
 
   /**
-   * Backfill fields added in Phase 1 on documents that predate them, so the
-   * scheduler's next_fire_at query and the timezone-aware formatting see
-   * every task. Idempotent and cheap (no-op once run).
+   * Backfill fields that queries filter or sort on, for documents that
+   * predate them. Everything else gets its default in documentToEntity.
+   * Idempotent and cheap (no-op once run).
    */
   public async onModuleInit(): Promise<void> {
-    try {
-      const fire = await this.model.updateMany(
+    // Each step stands alone: one failing must not block the others, and a
+    // failure here must never stop the app from booting.
+    const step = async (
+      name: string,
+      run: () => Promise<{ modifiedCount: number }>,
+    ): Promise<void> => {
+      try {
+        const { modifiedCount } = await run();
+        if (modifiedCount > 0) {
+          this.logger.log(`Backfilled ${name} on ${modifiedCount} task(s)`);
+        }
+      } catch (error) {
+        this.logger.error(`Task backfill "${name}" failed`, error as Error);
+      }
+    };
+
+    // Mongoose 9 refuses aggregation-pipeline updates unless asked to.
+    await step('next_fire_at', () =>
+      this.model.updateMany(
         { next_fire_at: { $exists: false } },
         [
           {
@@ -47,23 +74,31 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
             },
           },
         ],
-      );
-      const tz = await this.model.updateMany(
+        { updatePipeline: true, timestamps: false },
+      ),
+    );
+    await step('timezone', () =>
+      this.model.updateMany(
         { timezone: { $exists: false } },
         {
           $set: {
             timezone: getEnv().OWNER_TIMEZONE ?? LEGACY_TIMEZONE_FALLBACK,
           },
         },
-      );
-      if (fire.modifiedCount > 0 || tz.modifiedCount > 0) {
-        this.logger.log(
-          `Backfilled tasks: next_fire_at on ${fire.modifiedCount}, timezone on ${tz.modifiedCount}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error('Task backfill failed', error as Error);
-    }
+        { timestamps: false },
+      ),
+    );
+    // The Done view sorts and filters on completed_at.
+    await step('completed_at', () =>
+      this.model.updateMany(
+        {
+          status: TaskStatus.Completed,
+          $or: [{ completed_at: { $exists: false } }, { completed_at: null }],
+        },
+        [{ $set: { completed_at: '$updated_at' } }],
+        { updatePipeline: true, timestamps: false },
+      ),
+    );
   }
 
   public async create(params: CreateTaskParams): Promise<Task> {
@@ -72,13 +107,20 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         user_id: params.userId,
         telegram_chat_id: params.telegramChatId,
         description: params.description,
+        notes: params.notes ?? null,
         scheduled_at: params.scheduledAt,
         timezone: params.timezone,
         snoozed_until: null,
         next_fire_at: params.scheduledAt,
         next_attempt_at: null,
+        lead_minutes: params.leadMinutes ?? null,
         status: TaskStatus.Pending,
+        priority: params.priority ?? 'normal',
+        category_id: params.categoryId ?? null,
         recurrence: recurrenceToSubdoc(params.recurrence ?? null),
+        source: sourceToSubdoc(params.source),
+        completed_at: null,
+        completions: [],
         last_sent_at: null,
       });
       return this.documentToEntity(doc);
@@ -104,12 +146,53 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     return docs.map((doc) => this.documentToEntity(doc));
   }
 
+  public async find(filter: TaskFilter): Promise<Task[]> {
+    const query: Record<string, unknown> = {
+      user_id: filter.userId,
+      status: { $in: filter.statuses },
+    };
+    if (filter.kind === 'todo') query['scheduled_at'] = null;
+    if (filter.kind === 'reminder') query['scheduled_at'] = { $ne: null };
+
+    const fire: Record<string, Date> = {};
+    if (filter.fireAtOrBefore) fire['$lte'] = filter.fireAtOrBefore;
+    if (filter.fireAfter) fire['$gt'] = filter.fireAfter;
+    if (Object.keys(fire).length > 0) query['next_fire_at'] = fire;
+
+    if (filter.completedAtOrAfter) {
+      query['completed_at'] = { $gte: filter.completedAtOrAfter };
+    }
+
+    const sort: Record<string, 1 | -1> =
+      filter.sort === 'completedAtDesc'
+        ? { completed_at: -1 }
+        : filter.sort === 'createdAtDesc'
+          ? { created_at: -1 }
+          : { next_fire_at: 1, created_at: 1 };
+
+    let cursor = this.model.find(query).sort(sort);
+    if (filter.limit !== undefined) cursor = cursor.limit(filter.limit);
+    const docs = await cursor;
+    return docs.map((doc) => this.documentToEntity(doc));
+  }
+
+  public async clearCategory(
+    userId: string,
+    categoryId: string,
+  ): Promise<void> {
+    await this.model.updateMany(
+      { user_id: userId, category_id: categoryId },
+      { $set: { category_id: null } },
+    );
+  }
+
   public async claimDueReminder(now: Date): Promise<ClaimedReminder | null> {
     // One reminder per fire time: due again only once next_fire_at moves
     // past the last send (delay, edit, recurrence rollover). A null
     // last_sent_at compares lower than any date, so never-sent tasks match.
     // findOneAndUpdate is atomic, so a second run (or replica) can't claim
     // the same task; we get the pre-claim document back to allow a release.
+    // Todos have next_fire_at null and never match $lte.
     const before = await this.model.findOneAndUpdate(
       {
         status: TaskStatus.Pending,
@@ -122,6 +205,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     );
     if (!before) return null;
     const task = this.documentToEntity(before);
+    if (!isScheduled(task)) return null; // unreachable given the query
     return {
       task: { ...task, lastSentAt: now, nextAttemptAt: null },
       previousLastSentAt: task.lastSentAt,
@@ -147,7 +231,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
   public async findOverdueRecurring(beforeDate: Date): Promise<Task[]> {
     const docs = await this.model.find({
       status: TaskStatus.Pending,
-      scheduled_at: { $lte: beforeDate },
+      scheduled_at: { $ne: null, $lte: beforeDate },
       recurrence: { $ne: null },
     });
     return docs.map((doc) => this.documentToEntity(doc));
@@ -155,22 +239,29 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
 
   public async update(params: UpdateTaskParams): Promise<Task> {
     try {
-      const updateData: Record<string, unknown> = {};
+      const set: Record<string, unknown> = {};
       if (params.description !== undefined)
-        updateData['description'] = params.description;
+        set['description'] = params.description;
+      if (params.notes !== undefined) set['notes'] = params.notes;
       if (params.scheduledAt !== undefined)
-        updateData['scheduled_at'] = params.scheduledAt;
-      if (params.timezone !== undefined)
-        updateData['timezone'] = params.timezone;
+        set['scheduled_at'] = params.scheduledAt;
+      if (params.timezone !== undefined) set['timezone'] = params.timezone;
       if (params.snoozedUntil !== undefined)
-        updateData['snoozed_until'] = params.snoozedUntil;
+        set['snoozed_until'] = params.snoozedUntil;
       if (params.nextAttemptAt !== undefined)
-        updateData['next_attempt_at'] = params.nextAttemptAt;
-      if (params.status !== undefined) updateData['status'] = params.status;
+        set['next_attempt_at'] = params.nextAttemptAt;
+      if (params.leadMinutes !== undefined)
+        set['lead_minutes'] = params.leadMinutes;
+      if (params.status !== undefined) set['status'] = params.status;
+      if (params.priority !== undefined) set['priority'] = params.priority;
+      if (params.categoryId !== undefined)
+        set['category_id'] = params.categoryId;
+      if (params.completedAt !== undefined)
+        set['completed_at'] = params.completedAt;
       if (params.lastSentAt !== undefined)
-        updateData['last_sent_at'] = params.lastSentAt;
+        set['last_sent_at'] = params.lastSentAt;
       if (params.recurrence !== undefined)
-        updateData['recurrence'] = recurrenceToSubdoc(params.recurrence);
+        set['recurrence'] = recurrenceToSubdoc(params.recurrence);
 
       // next_fire_at is derived; recompute whenever either input changes.
       if (
@@ -181,24 +272,35 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         if (!existing) {
           throw new TaskNotFoundError(`Task with id ${params.id} not found`);
         }
-        const scheduledAt = params.scheduledAt ?? existing.scheduled_at;
+        const scheduledAt =
+          params.scheduledAt !== undefined
+            ? params.scheduledAt
+            : existing.scheduled_at;
         const snoozedUntil =
           params.snoozedUntil !== undefined
             ? params.snoozedUntil
             : (existing.snoozed_until ?? null);
-        updateData['next_fire_at'] = snoozedUntil ?? scheduledAt;
+        // A todo (no scheduledAt) never fires, whatever the snooze says.
+        set['next_fire_at'] =
+          scheduledAt === null ? null : (snoozedUntil ?? scheduledAt);
       }
 
-      const doc = await this.model.findByIdAndUpdate(
-        params.id,
-        { $set: updateData },
-        { new: true },
-      );
+      const update: Record<string, unknown> = { $set: set };
+      if (params.pushCompletion) {
+        update['$push'] = {
+          completions: {
+            at: params.pushCompletion.at,
+            occurrence_at: params.pushCompletion.occurrenceAt,
+          },
+        };
+      }
 
+      const doc = await this.model.findByIdAndUpdate(params.id, update, {
+        new: true,
+      });
       if (!doc) {
         throw new TaskNotFoundError(`Task with id ${params.id} not found`);
       }
-
       return this.documentToEntity(doc);
     } catch (error) {
       if (error instanceof ApplicationError) throw error;
@@ -214,20 +316,35 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
   }
 
   private documentToEntity(document: TaskDocument): Task {
+    const scheduledAt = document.scheduled_at ?? null;
     const snoozedUntil = document.snoozed_until ?? null;
+    const nextFireAt =
+      scheduledAt === null
+        ? null
+        : (document.next_fire_at ?? snoozedUntil ?? scheduledAt);
     return {
       id: document._id.toHexString(),
       userId: document.user_id,
       telegramChatId: document.telegram_chat_id,
       description: document.description,
-      scheduledAt: document.scheduled_at,
+      notes: document.notes ?? null,
+      kind: scheduledAt === null ? 'todo' : 'reminder',
+      scheduledAt,
       timezone: document.timezone ?? LEGACY_TIMEZONE_FALLBACK,
       snoozedUntil,
-      nextFireAt:
-        document.next_fire_at ?? snoozedUntil ?? document.scheduled_at,
+      nextFireAt,
       nextAttemptAt: document.next_attempt_at ?? null,
+      leadMinutes: document.lead_minutes ?? null,
       status: document.status as TaskStatus,
+      priority: (document.priority as Priority | undefined) ?? 'normal',
+      categoryId: document.category_id ?? null,
       recurrence: subdocToRecurrence(document.recurrence),
+      source: subdocToSource(document.source),
+      completedAt: document.completed_at ?? null,
+      completions: (document.completions ?? []).map((c) => ({
+        at: c.at,
+        occurrenceAt: c.occurrence_at,
+      })),
       lastSentAt: document.last_sent_at ?? undefined,
       createdAt: document.created_at,
       updatedAt: document.updated_at,
@@ -256,4 +373,23 @@ function subdocToRecurrence(
   if (typeof intervalDays === 'number') recurrence.intervalDays = intervalDays;
   if (anchorAt instanceof Date) recurrence.anchorAt = anchorAt;
   return recurrence;
+}
+
+function sourceToSubdoc(source: TaskSource): SourceSubdoc {
+  return {
+    type: source.type,
+    original_text: source.originalText,
+    message_id: source.messageId,
+    forwarded_from: source.forwardedFrom,
+  };
+}
+
+function subdocToSource(subdoc: SourceSubdoc | null | undefined): TaskSource {
+  if (!subdoc) return { ...LEGACY_SOURCE };
+  return {
+    type: subdoc.type as TaskSource['type'],
+    originalText: subdoc.original_text ?? null,
+    messageId: subdoc.message_id ?? null,
+    forwardedFrom: subdoc.forwarded_from ?? null,
+  };
 }

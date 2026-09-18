@@ -16,6 +16,7 @@ import {
 import { FailedToSaveUserError, UserNotFoundError } from '@domain/user';
 import { NotificationFailedError } from '@domain/notification/errors';
 import { ParsingFailedError, TranscriptionFailedError } from '@domain/ai';
+import { CategoryNotFoundError } from '@usecases/category/errors';
 
 interface ErrorBody {
   statusCode: number;
@@ -70,7 +71,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (
       exception instanceof TaskNotFoundError ||
-      exception instanceof UserNotFoundError
+      exception instanceof UserNotFoundError ||
+      exception instanceof CategoryNotFoundError
     ) {
       return httpBody(HttpStatus.NOT_FOUND, exception.message);
     }

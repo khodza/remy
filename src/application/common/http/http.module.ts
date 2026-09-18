@@ -14,7 +14,16 @@ import { UserController } from './controllers/user.controller';
 import { TaskController } from './controllers/task.controller';
 import { AiController } from './controllers/ai.controller';
 import { HealthController } from './controllers/health.controller';
+import { SettingsController } from './controllers/settings.controller';
+import { CategoryController } from './controllers/category.controller';
 import { getEnv } from '@common/config';
+import { GetSettingsUsecase, UpdateSettingsUsecase } from '@usecases/settings';
+import {
+  CreateCategoryUsecase,
+  DeleteCategoryUsecase,
+  ListCategoriesUsecase,
+  UpdateCategoryUsecase,
+} from '@usecases/category';
 
 @Module({
   imports: [
@@ -40,10 +49,18 @@ import { getEnv } from '@common/config';
     UserController,
     TaskController,
     AiController,
+    SettingsController,
+    CategoryController,
     HealthController,
   ],
   providers: [
     AuthService,
+    GetSettingsUsecase,
+    UpdateSettingsUsecase,
+    ListCategoriesUsecase,
+    CreateCategoryUsecase,
+    UpdateCategoryUsecase,
+    DeleteCategoryUsecase,
     InitDataGuard,
     JwtAuthGuard,
     { provide: APP_FILTER, useClass: HttpExceptionFilter },

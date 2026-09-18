@@ -12,7 +12,12 @@ import {
   ListTasksUsecase,
   DeleteTaskUsecase,
   SendPendingRemindersUsecase,
+  CreateStructuredTaskUsecase,
+  UpdateTaskUsecase,
+  ReopenTaskUsecase,
+  SnoozeTaskUsecase,
 } from '@usecases/task';
+import { UserModule } from '../user/user.module';
 import { OpenAIModule } from '../openai/openai.module';
 import { NotificationModule } from '../notification/notification.module';
 
@@ -23,6 +28,7 @@ import { NotificationModule } from '../notification/notification.module';
     ]),
     OpenAIModule,
     NotificationModule,
+    UserModule,
   ],
   providers: [
     {
@@ -36,6 +42,10 @@ import { NotificationModule } from '../notification/notification.module';
     ListTasksUsecase,
     DeleteTaskUsecase,
     SendPendingRemindersUsecase,
+    CreateStructuredTaskUsecase,
+    UpdateTaskUsecase,
+    ReopenTaskUsecase,
+    SnoozeTaskUsecase,
   ],
   exports: [
     Domain.Task.Repository,
@@ -46,6 +56,10 @@ import { NotificationModule } from '../notification/notification.module';
     ListTasksUsecase,
     DeleteTaskUsecase,
     SendPendingRemindersUsecase,
+    CreateStructuredTaskUsecase,
+    UpdateTaskUsecase,
+    ReopenTaskUsecase,
+    SnoozeTaskUsecase,
   ],
 })
 export class TaskModule {}

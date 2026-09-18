@@ -2,6 +2,7 @@ import { EnsureUserUsecase } from './usecase';
 import type { UserRepository } from '@domain/user/repository';
 import type { User } from '@domain/user';
 import { FailedToSaveUserError } from '@domain/user/errors';
+import { DEFAULT_USER_SETTINGS } from '@domain/user';
 
 describe('EnsureUserUsecase', () => {
   let usecase: EnsureUserUsecase;
@@ -16,6 +17,8 @@ describe('EnsureUserUsecase', () => {
     lastName: 'Doe',
     username: 'johndoe',
     timezone: 'UTC',
+    settings: structuredClone(DEFAULT_USER_SETTINGS),
+    categories: null,
     createdAt: now,
     updatedAt: now,
   };

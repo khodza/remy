@@ -7,7 +7,8 @@ import type { UserRepository } from '@domain/user';
 import { UserNotFoundError } from '@domain/user';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { ParseTextDto } from '../dto/parse-text.dto';
+import { ParseTextRequest } from '@contract/remy-contract';
+import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
 import type { AuthContext } from '../types';
 
 export interface ParsedTaskDto {
@@ -30,7 +31,7 @@ export class AiController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async parse(
     @CurrentUser() auth: AuthContext,
-    @Body() dto: ParseTextDto,
+    @Body(new ZodValidationPipe(ParseTextRequest)) dto: ParseTextRequest,
   ): Promise<ParsedTaskDto> {
     const user = await this.userRepository.findById(auth.userId);
     if (!user) {

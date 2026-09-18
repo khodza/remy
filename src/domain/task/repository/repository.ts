@@ -4,12 +4,17 @@ import {
   UpdateTaskParams,
   TaskStatus,
   ClaimedReminder,
+  TaskFilter,
 } from './types';
 
 export interface TaskRepository {
   create(params: CreateTaskParams): Promise<Task>;
   findById(id: string): Promise<Task | null>;
   findByUserId(userId: string, status?: TaskStatus): Promise<Task[]>;
+  /** Filtered, sorted, optionally limited query used by the Mini App views. */
+  find(filter: TaskFilter): Promise<Task[]>;
+  /** Removes a deleted category from every task of the user that carries it. */
+  clearCategory(userId: string, categoryId: string): Promise<void>;
   /**
    * Atomically claims one pending task that is due (nextFireAt <= now, not
    * yet reminded for this nextFireAt, no retry hold) by stamping

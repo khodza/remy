@@ -29,6 +29,11 @@ export class DelayTaskUsecase {
       if (task.status !== TaskStatus.Pending) {
         throw new InvalidInputError('Only pending tasks can be delayed');
       }
+      if (task.nextFireAt === null) {
+        throw new InvalidInputError(
+          'This task has no time yet; schedule it instead of delaying it',
+        );
+      }
 
       // Snoozing an overdue task counts from now: adding to the old time
       // would leave it in the past, and the reminder would fire again

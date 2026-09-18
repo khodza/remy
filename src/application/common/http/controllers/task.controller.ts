@@ -19,83 +19,41 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ParseObjectIdPipe } from '@nestjs/mongoose';
 import { Throttle } from '@nestjs/throttler';
 import { Domain } from '@common/tokens';
-import type { Recurrence, Task, TaskRepository } from '@domain/task';
+import { getEnv } from '@common/config';
+import type { Task, TaskRepository } from '@domain/task';
 import { TaskNotFoundError } from '@domain/task';
-import type { UserRepository } from '@domain/user';
+import type { User, UserRepository } from '@domain/user';
 import { UserNotFoundError } from '@domain/user';
 import {
+  CreateStructuredTaskUsecase,
   DelayTaskUsecase,
   DeleteTaskUsecase,
   ListTasksUsecase,
   MarkCompleteUsecase,
   ProcessTextMessageUsecase,
   ProcessVoiceMessageUsecase,
+  ReopenTaskUsecase,
+  SnoozeTaskUsecase,
+  UpdateTaskUsecase,
 } from '@usecases/task';
-import type { TaskWithOverdueFlag } from '@usecases/task';
+import {
+  CreateTaskFromTextRequest,
+  CreateTaskStructuredRequest,
+  DelayTaskRequest,
+  ListTasksQuery,
+  SnoozeTaskRequest,
+  UpdateTaskRequest,
+  type DeleteResult,
+  type TaskWire,
+} from '@contract/remy-contract';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { CreateTaskDto } from '../dto/create-task.dto';
-import { DelayTaskDto } from '../dto/delay-task.dto';
-import { ListTasksQueryDto } from '../dto/list-tasks-query.dto';
-import { UpdateTaskDto } from '../dto/update-task.dto';
+import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
+import { toTaskWire } from '../mappers/task.mapper';
 import type { AuthContext } from '../types';
 
 const VOICE_MAX_BYTES = 20 * 1024 * 1024; // 20 MiB
 const VOICE_ALLOWED_MIME_PREFIXES = ['audio/', 'video/webm'];
-
-export interface RecurrenceDtoOut {
-  type: Recurrence['type'];
-  intervalDays?: number;
-}
-
-export interface TaskDto {
-  id: string;
-  description: string;
-  /** The current occurrence (series time for recurring tasks), ISO. */
-  scheduledAt: string;
-  /** IANA zone the task was created in. */
-  timezone: string;
-  /** Set when a recurring task's current occurrence was delayed, ISO. */
-  snoozedUntil: string | null;
-  /** When the reminder actually fires: snoozedUntil ?? scheduledAt, ISO. */
-  nextFireAt: string;
-  status: Task['status'];
-  recurrence: RecurrenceDtoOut | null;
-  isOverdue?: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-function toDto(task: Task | TaskWithOverdueFlag): TaskDto {
-  const dto: TaskDto = {
-    id: task.id,
-    description: task.description,
-    scheduledAt: task.scheduledAt.toISOString(),
-    timezone: task.timezone,
-    snoozedUntil: task.snoozedUntil ? task.snoozedUntil.toISOString() : null,
-    nextFireAt: task.nextFireAt.toISOString(),
-    status: task.status,
-    recurrence: task.recurrence
-      ? {
-          type: task.recurrence.type,
-          ...(task.recurrence.intervalDays !== undefined
-            ? { intervalDays: task.recurrence.intervalDays }
-            : {}),
-        }
-      : null,
-    createdAt: task.createdAt.toISOString(),
-    updatedAt: task.updatedAt.toISOString(),
-  };
-  if ('isOverdue' in task) dto.isOverdue = task.isOverdue;
-  return dto;
-}
-
-function withOverdue(task: Task): TaskWithOverdueFlag {
-  return {
-    ...task,
-    isOverdue: task.status === 'pending' && task.nextFireAt < new Date(),
-  };
-}
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard)
@@ -108,57 +66,83 @@ export class TaskController {
     private readonly listTasksUsecase: ListTasksUsecase,
     private readonly processTextMessageUsecase: ProcessTextMessageUsecase,
     private readonly processVoiceMessageUsecase: ProcessVoiceMessageUsecase,
+    private readonly createStructuredTaskUsecase: CreateStructuredTaskUsecase,
+    private readonly updateTaskUsecase: UpdateTaskUsecase,
     private readonly markCompleteUsecase: MarkCompleteUsecase,
+    private readonly reopenTaskUsecase: ReopenTaskUsecase,
     private readonly delayTaskUsecase: DelayTaskUsecase,
+    private readonly snoozeTaskUsecase: SnoozeTaskUsecase,
     private readonly deleteTaskUsecase: DeleteTaskUsecase,
   ) {}
 
   @Get()
   async list(
     @CurrentUser() auth: AuthContext,
-    @Query() query: ListTasksQueryDto,
-  ): Promise<{ tasks: TaskDto[] }> {
+    @Query(new ZodValidationPipe(ListTasksQuery)) query: ListTasksQuery,
+  ): Promise<{ tasks: TaskWire[] }> {
+    const user = await this.requireUser(auth.userId);
     const result = await this.listTasksUsecase.execute({
       userId: auth.userId,
+      view: query.view ?? 'all',
       includeCompleted: query.includeCompleted === 'true',
+      timezone: zoneOf(user),
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
     });
-    return { tasks: result.tasks.map(toDto) };
+    const now = new Date();
+    return { tasks: result.tasks.map((task) => toTaskWire(task, now)) };
   }
 
   @Get(':id')
   async getOne(
     @CurrentUser() auth: AuthContext,
     @Param('id', ParseObjectIdPipe) id: string,
-  ): Promise<TaskDto> {
-    const task = await this.requireOwnedTask(id, auth.userId);
-    return toDto(withOverdue(task));
+  ): Promise<TaskWire> {
+    return toTaskWire(await this.requireOwnedTask(id, auth.userId));
   }
 
   @Post()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async create(
     @CurrentUser() auth: AuthContext,
-    @Body() dto: CreateTaskDto,
-  ): Promise<TaskDto> {
-    const user = await this.userRepository.findById(auth.userId);
-    if (!user) {
-      throw new UserNotFoundError(`User ${auth.userId} not found`);
-    }
-
+    @Body(new ZodValidationPipe(CreateTaskFromTextRequest))
+    dto: CreateTaskFromTextRequest,
+  ): Promise<TaskWire> {
+    const user = await this.requireUser(auth.userId);
     const result = await this.processTextMessageUsecase.execute({
       userId: user.id,
       telegramChatId: user.telegramUserId,
       text: dto.text,
-      ...(user.timezone ? { userTimezone: user.timezone } : {}),
+      userTimezone: zoneOf(user),
+      source: { type: 'miniapp' },
     });
+    return toTaskWire(await this.requireTask(result.taskId));
+  }
 
-    const task = await this.taskRepository.findById(result.taskId);
-    if (!task) {
-      throw new TaskNotFoundError(
-        `Task ${result.taskId} not found after create`,
-      );
-    }
-    return toDto(task);
+  @Post('structured')
+  async createStructured(
+    @CurrentUser() auth: AuthContext,
+    @Body(new ZodValidationPipe(CreateTaskStructuredRequest))
+    dto: CreateTaskStructuredRequest,
+  ): Promise<TaskWire> {
+    const user = await this.requireUser(auth.userId);
+    const task = await this.createStructuredTaskUsecase.execute({
+      userId: user.id,
+      telegramChatId: user.telegramUserId,
+      timezone: zoneOf(user),
+      description: dto.description,
+      ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+      scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
+      ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
+      ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
+      ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
+      ...(dto.leadMinutes !== undefined
+        ? { leadMinutes: dto.leadMinutes }
+        : {}),
+      ...(dto.originalText !== undefined
+        ? { originalText: dto.originalText }
+        : {}),
+    });
+    return toTaskWire(task);
   }
 
   @Post('voice')
@@ -171,7 +155,7 @@ export class TaskController {
   async createFromVoice(
     @CurrentUser() auth: AuthContext,
     @UploadedFile() file: Express.Multer.File | undefined,
-  ): Promise<TaskDto> {
+  ): Promise<TaskWire> {
     if (!file) {
       throw new BadRequestException('audio file is required');
     }
@@ -188,110 +172,121 @@ export class TaskController {
       throw new BadRequestException(`unsupported audio mime type: ${mime}`);
     }
 
-    const user = await this.userRepository.findById(auth.userId);
-    if (!user) {
-      throw new UserNotFoundError(`User ${auth.userId} not found`);
-    }
-
+    const user = await this.requireUser(auth.userId);
     const result = await this.processVoiceMessageUsecase.execute({
       userId: user.id,
       telegramChatId: user.telegramUserId,
       audioFileBuffer: file.buffer,
       mimeType: mime,
-      ...(user.timezone ? { userTimezone: user.timezone } : {}),
+      userTimezone: zoneOf(user),
+      sourceType: 'miniapp',
     });
-
-    const task = await this.taskRepository.findById(result.taskId);
-    if (!task) {
-      throw new TaskNotFoundError(
-        `Task ${result.taskId} not found after create`,
-      );
-    }
-    return toDto(task);
+    return toTaskWire(await this.requireTask(result.taskId));
   }
 
   @Patch(':id')
   async update(
     @CurrentUser() auth: AuthContext,
     @Param('id', ParseObjectIdPipe) id: string,
-    @Body() dto: UpdateTaskDto,
-  ): Promise<TaskDto> {
-    const existing = await this.requireOwnedTask(id, auth.userId);
-    if (existing.status !== 'pending') {
-      throw new BadRequestException('Only pending tasks can be edited');
-    }
-
-    const scheduledAt =
-      dto.scheduledAt !== undefined ? new Date(dto.scheduledAt) : undefined;
-
-    // A recurrence is anchored at its first occurrence. Setting a new
-    // recurrence, or moving the series time, re-anchors it; editing only the
-    // description keeps the anchor as it is.
-    let recurrence: Recurrence | null | undefined;
-    if (dto.recurrence !== undefined) {
-      recurrence = dto.recurrence
-        ? {
-            type: dto.recurrence.type,
-            ...(dto.recurrence.intervalDays !== undefined
-              ? { intervalDays: dto.recurrence.intervalDays }
-              : {}),
-            anchorAt: scheduledAt ?? existing.scheduledAt,
-          }
-        : null;
-    } else if (scheduledAt !== undefined && existing.recurrence) {
-      recurrence = { ...existing.recurrence, anchorAt: scheduledAt };
-    }
-
-    const updated = await this.taskRepository.update({
-      id,
+    @Body(new ZodValidationPipe(UpdateTaskRequest)) dto: UpdateTaskRequest,
+  ): Promise<TaskWire> {
+    await this.requireOwnedTask(id, auth.userId);
+    const updated = await this.updateTaskUsecase.execute({
+      taskId: id,
       ...(dto.description !== undefined
         ? { description: dto.description }
         : {}),
-      ...(scheduledAt !== undefined ? { scheduledAt, snoozedUntil: null } : {}),
-      ...(recurrence !== undefined ? { recurrence } : {}),
+      ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+      ...(dto.scheduledAt !== undefined
+        ? {
+            scheduledAt:
+              dto.scheduledAt === null ? null : new Date(dto.scheduledAt),
+          }
+        : {}),
+      ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
+      ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
+      ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
+      ...(dto.leadMinutes !== undefined
+        ? { leadMinutes: dto.leadMinutes }
+        : {}),
     });
-    return toDto(withOverdue(updated));
+    return toTaskWire(updated);
   }
 
   @Post(':id/complete')
   async complete(
     @CurrentUser() auth: AuthContext,
     @Param('id', ParseObjectIdPipe) id: string,
-  ): Promise<TaskDto> {
+  ): Promise<TaskWire> {
     await this.requireOwnedTask(id, auth.userId);
-    const task = await this.markCompleteUsecase.execute({ taskId: id });
-    return toDto(withOverdue(task));
+    return toTaskWire(await this.markCompleteUsecase.execute({ taskId: id }));
+  }
+
+  @Post(':id/reopen')
+  async reopen(
+    @CurrentUser() auth: AuthContext,
+    @Param('id', ParseObjectIdPipe) id: string,
+  ): Promise<TaskWire> {
+    await this.requireOwnedTask(id, auth.userId);
+    return toTaskWire(await this.reopenTaskUsecase.execute({ taskId: id }));
   }
 
   @Post(':id/delay')
   async delay(
     @CurrentUser() auth: AuthContext,
     @Param('id', ParseObjectIdPipe) id: string,
-    @Body() dto: DelayTaskDto,
-  ): Promise<TaskDto> {
+    @Body(new ZodValidationPipe(DelayTaskRequest)) dto: DelayTaskRequest,
+  ): Promise<TaskWire> {
     await this.requireOwnedTask(id, auth.userId);
     const task = await this.delayTaskUsecase.execute({
       taskId: id,
       delayMinutes: dto.minutes,
     });
-    return toDto(withOverdue(task));
+    return toTaskWire(task);
+  }
+
+  @Post(':id/snooze')
+  async snooze(
+    @CurrentUser() auth: AuthContext,
+    @Param('id', ParseObjectIdPipe) id: string,
+    @Body(new ZodValidationPipe(SnoozeTaskRequest)) dto: SnoozeTaskRequest,
+  ): Promise<TaskWire> {
+    await this.requireOwnedTask(id, auth.userId);
+    const task = await this.snoozeTaskUsecase.execute({
+      taskId: id,
+      until: new Date(dto.until),
+    });
+    return toTaskWire(task);
   }
 
   @Delete(':id')
   async remove(
     @CurrentUser() auth: AuthContext,
     @Param('id', ParseObjectIdPipe) id: string,
-  ): Promise<{ success: boolean }> {
+  ): Promise<DeleteResult> {
     await this.requireOwnedTask(id, auth.userId);
     return this.deleteTaskUsecase.execute({ taskId: id });
+  }
+
+  private async requireUser(userId: string): Promise<User> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) throw new UserNotFoundError(`User ${userId} not found`);
+    return user;
+  }
+
+  private async requireTask(taskId: string): Promise<Task> {
+    const task = await this.taskRepository.findById(taskId);
+    if (!task) throw new TaskNotFoundError(`Task ${taskId} not found`);
+    return task;
   }
 
   private async requireOwnedTask(
     taskId: string,
     userId: string,
   ): Promise<Task> {
-    const task = await this.taskRepository.findById(taskId);
-    if (!task) {
+    const task = await this.requireTask(taskId);
+    // Deleted tasks are gone as far as the API is concerned.
+    if (task.status === 'deleted') {
       throw new TaskNotFoundError(`Task ${taskId} not found`);
     }
     if (task.userId !== userId) {
@@ -299,4 +294,8 @@ export class TaskController {
     }
     return task;
   }
+}
+
+function zoneOf(user: Pick<User, 'timezone'>): string {
+  return user.timezone ?? getEnv().OWNER_TIMEZONE ?? 'UTC';
 }

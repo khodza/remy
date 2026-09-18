@@ -26,13 +26,45 @@ export type Recurrence = {
   anchorAt?: Date;
 };
 
+/** A reminder has a time; a todo has none and lives in the Inbox. */
+export type TaskKind = 'reminder' | 'todo';
+
+export type Priority = 'low' | 'normal' | 'high';
+
+export type TaskSourceType = 'text' | 'voice' | 'forward' | 'miniapp';
+
+/** Where a task came from, so a reminder can point back at its origin. */
+export type TaskSource = {
+  type: TaskSourceType;
+  /** The user's own words (chat text or voice transcript). */
+  originalText: string | null;
+  /** Telegram message id that created the task. */
+  messageId: number | null;
+  /** Display name a forwarded message came from. */
+  forwardedFrom: string | null;
+};
+
+/** One "Done" on a recurring task. */
+export type Completion = {
+  at: Date;
+  /** The occurrence that was completed. */
+  occurrenceAt: Date;
+};
+
 export type Task = {
   id: string;
   userId: string;
   telegramChatId: number;
+  /** The title: what to do. */
   description: string;
-  /** The current occurrence's time (the series time for recurring tasks). */
-  scheduledAt: Date;
+  notes: string | null;
+  /** Derived: 'todo' when scheduledAt is null. */
+  kind: TaskKind;
+  /**
+   * The current occurrence's time (the series time for recurring tasks).
+   * Null for todos.
+   */
+  scheduledAt: Date | null;
   /** IANA zone the task was created in; every display uses it. */
   timezone: string;
   /**
@@ -40,46 +72,91 @@ export type Task = {
    * reminder fires at this time instead of scheduledAt, and the series is
    * untouched. Cleared when the occurrence is completed or rolled over.
    */
-  snoozedUntil?: Date | null;
+  snoozedUntil: Date | null;
   /** When the reminder actually fires: snoozedUntil ?? scheduledAt. */
-  nextFireAt: Date;
+  nextFireAt: Date | null;
   /** Earliest time the scheduler may retry after a transient send failure. */
-  nextAttemptAt?: Date | null;
+  nextAttemptAt: Date | null;
+  /** Heads-up this many minutes before scheduledAt (delivery: Phase 3). */
+  leadMinutes: number | null;
   status: TaskStatus;
-  /** Null (or undefined) when the task is one-shot. */
-  recurrence?: Recurrence | null;
+  priority: Priority;
+  categoryId: string | null;
+  /** Null when the task is one-shot. */
+  recurrence: Recurrence | null;
+  source: TaskSource;
+  /** When a one-shot task was completed. */
+  completedAt: Date | null;
+  /** History of "Done" taps on a recurring task. */
+  completions: Completion[];
   lastSentAt?: Date; // Reminder sent for the current nextFireAt when >= nextFireAt
   createdAt: Date;
   updatedAt: Date;
 };
 
+/** A task that is guaranteed to have a time. */
+export type ScheduledTask = Task & { scheduledAt: Date; nextFireAt: Date };
+
+export function isScheduled(task: Task): task is ScheduledTask {
+  return task.scheduledAt !== null && task.nextFireAt !== null;
+}
+
 export type CreateTaskParams = {
   userId: string;
   telegramChatId: number;
   description: string;
-  scheduledAt: Date;
+  /** Null creates a todo. */
+  scheduledAt: Date | null;
   timezone: string;
+  source: TaskSource;
+  notes?: string | null;
   recurrence?: Recurrence | null;
+  priority?: Priority;
+  categoryId?: string | null;
+  leadMinutes?: number | null;
 };
 
 export type UpdateTaskParams = {
   id: string;
   description?: string;
-  scheduledAt?: Date;
+  notes?: string | null;
+  /** Null turns the task into a todo. */
+  scheduledAt?: Date | null;
   timezone?: string;
   /** Explicitly null clears the snooze; undefined leaves it unchanged. */
   snoozedUntil?: Date | null;
   nextAttemptAt?: Date | null;
+  leadMinutes?: number | null;
   status?: TaskStatus;
+  priority?: Priority;
+  categoryId?: string | null;
+  completedAt?: Date | null;
+  /** Appended to `completions`. */
+  pushCompletion?: Completion;
   lastSentAt?: Date;
   /** Explicitly null clears recurrence; undefined leaves it unchanged. */
   recurrence?: Recurrence | null;
 };
 
+/** Composable query for the Mini App's views. All conditions are ANDed. */
+export type TaskFilter = {
+  userId: string;
+  statuses: TaskStatus[];
+  kind?: TaskKind;
+  /** nextFireAt <= value */
+  fireAtOrBefore?: Date;
+  /** nextFireAt > value */
+  fireAfter?: Date;
+  /** completedAt >= value */
+  completedAtOrAfter?: Date;
+  sort: 'fireAt' | 'completedAtDesc' | 'createdAtDesc';
+  limit?: number;
+};
+
 /** What the scheduler gets back from an atomic claim. */
 export type ClaimedReminder = {
   /** The task after the claim (lastSentAt already stamped). */
-  task: Task;
+  task: ScheduledTask;
   /** lastSentAt before the claim, to restore on a transient failure. */
   previousLastSentAt: Date | undefined;
 };

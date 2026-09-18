@@ -1,4 +1,5 @@
 import { Types, HydratedDocument } from 'mongoose';
+import type { Category, UserSettings } from '@domain/user';
 
 export type UserDocument = {
   _id: Types.ObjectId;
@@ -7,6 +8,9 @@ export type UserDocument = {
   last_name: string | null;
   username: string | null;
   timezone: string | null;
+  /** Stored as the domain shape; missing keys fall back to defaults on read. */
+  settings?: Partial<UserSettings> | null;
+  categories?: Category[] | null;
   created_at: Date;
   updated_at: Date;
 };

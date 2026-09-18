@@ -22,11 +22,11 @@ export class MarkCompleteUsecase {
       if (!existing) {
         throw new TaskNotFoundError(`Task with id ${input.taskId} not found`);
       }
+      const now = new Date();
 
       // Recurring tasks never "complete" — they advance to the next
       // occurrence so the user keeps getting reminded.
-      if (existing.recurrence) {
-        const now = new Date();
+      if (existing.recurrence && existing.scheduledAt) {
         // Idempotent: if the series already sits in the future (a stale
         // reminder message tapped twice, or two old messages tapped in a
         // row), don't skip a cycle.
@@ -49,6 +49,7 @@ export class MarkCompleteUsecase {
           scheduledAt: nextAt,
           snoozedUntil: null,
           status: TaskStatus.Pending,
+          pushCompletion: { at: now, occurrenceAt: existing.scheduledAt },
         });
         return { ...updated, alreadyDone: false };
       }
@@ -60,6 +61,7 @@ export class MarkCompleteUsecase {
       const updated = await this.taskRepository.update({
         id: input.taskId,
         status: TaskStatus.Completed,
+        completedAt: now,
       });
       return { ...updated, alreadyDone: false };
     } catch (error) {

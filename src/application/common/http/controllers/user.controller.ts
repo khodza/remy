@@ -13,7 +13,8 @@ import { UpdateTimezoneUsecase } from '@usecases/user';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { AuthService, type UserDto } from '../services/auth.service';
-import { UpdateTimezoneDto } from '../dto/update-timezone.dto';
+import { UpdateTimezoneRequest } from '@contract/remy-contract';
+import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
 import type { AuthContext } from '../types';
 
 @Controller('user')
@@ -38,7 +39,8 @@ export class UserController {
   @Patch('timezone')
   async updateTimezone(
     @CurrentUser() auth: AuthContext,
-    @Body() dto: UpdateTimezoneDto,
+    @Body(new ZodValidationPipe(UpdateTimezoneRequest))
+    dto: UpdateTimezoneRequest,
   ): Promise<UserDto> {
     const user = await this.updateTimezoneUsecase.execute({
       userId: auth.userId,

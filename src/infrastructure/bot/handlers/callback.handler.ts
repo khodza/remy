@@ -65,7 +65,7 @@ export class CallbackHandler {
       // the next occurrence is so "Done" doesn't look like it deleted it.
       await ignoreNotModified(
         ctx.editMessageText(
-          `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${formatForUser(task.scheduledAt, task.timezone)}`,
+          `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${task.scheduledAt ? formatForUser(task.scheduledAt, task.timezone) : '—'}`,
           { parse_mode: 'HTML' },
         ),
       );
@@ -102,7 +102,7 @@ export class CallbackHandler {
 
     await ignoreNotModified(
       ctx.editMessageText(
-        `⏰ <b>Snoozed</b>\n\n📝 ${escapeHtml(task.description)}\n⏭ Reminding again at ${formatForUser(task.nextFireAt, task.timezone)}`,
+        `⏰ <b>Snoozed</b>\n\n📝 ${escapeHtml(task.description)}\n⏭ Reminding again at ${task.nextFireAt ? formatForUser(task.nextFireAt, task.timezone) : '—'}`,
         { parse_mode: 'HTML' },
       ),
     );

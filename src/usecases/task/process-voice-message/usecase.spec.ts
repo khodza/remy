@@ -56,6 +56,7 @@ describe('ProcessVoiceMessageUsecase', () => {
       telegramChatId: 12345,
       text: 'Buy groceries at 3pm',
       userTimezone: 'UTC',
+      source: { type: 'voice' },
     });
     expect(result).toEqual({
       taskId: 'task-1',

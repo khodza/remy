@@ -38,6 +38,12 @@ export class ProcessVoiceMessageUsecase {
       telegramChatId: input.telegramChatId,
       text: transcription.text,
       userTimezone: input.userTimezone,
+      source: {
+        type: input.sourceType ?? 'voice',
+        ...(input.messageId !== undefined
+          ? { messageId: input.messageId }
+          : {}),
+      },
     });
 
     return {

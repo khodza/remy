@@ -36,6 +36,7 @@
       "@infra/*": ["src/infrastructure/*"],
       "@usecases/*": ["src/usecases/*"],
       "@common/*": ["src/common/*"],
+      "@contract/*": ["src/contract/*"],
       "@test/*": ["test/*"]
     },
     "isolatedModules": false,

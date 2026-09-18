@@ -2,7 +2,7 @@ import { SendPendingRemindersUsecase } from './usecase';
 import type { TaskRepository } from '@domain/task/repository';
 import type { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
-import type { Task } from '@domain/task';
+import type { ScheduledTask, Task } from '@domain/task';
 import { makeTask, mockTaskRepository } from '@test/factories';
 
 describe('SendPendingRemindersUsecase', () => {
@@ -18,7 +18,10 @@ describe('SendPendingRemindersUsecase', () => {
     taskRepository.claimDueReminder.mockImplementation(async () => {
       const task = queue.shift();
       return task
-        ? { task: { ...task, lastSentAt: now }, previousLastSentAt }
+        ? {
+            task: { ...task, lastSentAt: now } as ScheduledTask,
+            previousLastSentAt,
+          }
         : null;
     });
   }

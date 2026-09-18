@@ -1,5 +1,4 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { EnvValidationError, getEnv } from '@common/config';
 
@@ -18,14 +17,8 @@ async function bootstrap() {
     credentials: false,
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: false },
-    }),
-  );
+  // Request validation is per-route: ZodValidationPipe with the schemas in
+  // src/contract/remy-contract.ts (the same file the frontend parses with).
 
   // Enable graceful shutdown
   app.enableShutdownHooks();

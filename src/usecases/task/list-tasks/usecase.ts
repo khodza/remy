@@ -1,7 +1,20 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { TaskRepository, TaskStatus } from '@domain/task/repository';
+import { Task, TaskRepository, TaskStatus } from '@domain/task/repository';
 import { Domain } from '@common/tokens';
+import { dayBoundsInZone } from '@common/day-bounds';
 import { ListTasksInput, ListTasksOutput, TaskWithOverdueFlag } from './types';
+
+const DEFAULT_DONE_LIMIT = 50;
+
+export function withOverdueFlag(task: Task, now: Date): TaskWithOverdueFlag {
+  return {
+    ...task,
+    isOverdue:
+      task.status === TaskStatus.Pending &&
+      task.nextFireAt !== null &&
+      task.nextFireAt < now,
+  };
+}
 
 @Injectable()
 export class ListTasksUsecase {
@@ -11,28 +24,67 @@ export class ListTasksUsecase {
   ) {}
 
   public async execute(input: ListTasksInput): Promise<ListTasksOutput> {
-    // Get all non-deleted tasks for user
-    const allTasks = await this.taskRepository.findByUserId(input.userId);
-
-    // Filter out deleted tasks and optionally completed tasks
-    const filteredTasks = allTasks.filter((task) => {
-      if (task.status === TaskStatus.Deleted) return false;
-      if (!input.includeCompleted && task.status === TaskStatus.Completed)
-        return false;
-      return true;
-    });
-
-    // Compute overdue flag
     const now = new Date();
-    const tasksWithOverdueFlag: TaskWithOverdueFlag[] = filteredTasks.map(
-      (task) => ({
-        ...task,
-        isOverdue: task.status === TaskStatus.Pending && task.nextFireAt < now,
-      }),
-    );
+    const tasks = await this.query(input, now);
+    return { tasks: tasks.map((task) => withOverdueFlag(task, now)) };
+  }
 
-    return {
-      tasks: tasksWithOverdueFlag,
-    };
+  private async query(input: ListTasksInput, now: Date): Promise<Task[]> {
+    const { userId } = input;
+    const view = input.view ?? 'all';
+    const { start, end } = dayBoundsInZone(now, input.timezone ?? 'UTC');
+    // `end` is exclusive; the filter is inclusive, so step back 1 ms.
+    const endOfToday = new Date(end.getTime() - 1);
+
+    switch (view) {
+      case 'today': {
+        const [due, doneToday] = await Promise.all([
+          this.taskRepository.find({
+            userId,
+            statuses: [TaskStatus.Pending],
+            kind: 'reminder',
+            fireAtOrBefore: endOfToday,
+            sort: 'fireAt',
+          }),
+          this.taskRepository.find({
+            userId,
+            statuses: [TaskStatus.Completed],
+            completedAtOrAfter: start,
+            sort: 'completedAtDesc',
+          }),
+        ]);
+        return [...due, ...doneToday];
+      }
+      case 'upcoming':
+        return this.taskRepository.find({
+          userId,
+          statuses: [TaskStatus.Pending],
+          kind: 'reminder',
+          fireAfter: endOfToday,
+          sort: 'fireAt',
+        });
+      case 'inbox':
+        return this.taskRepository.find({
+          userId,
+          statuses: [TaskStatus.Pending],
+          kind: 'todo',
+          sort: 'createdAtDesc',
+        });
+      case 'done':
+        return this.taskRepository.find({
+          userId,
+          statuses: [TaskStatus.Completed],
+          sort: 'completedAtDesc',
+          limit: input.limit ?? DEFAULT_DONE_LIMIT,
+        });
+      case 'all':
+        return this.taskRepository.find({
+          userId,
+          statuses: input.includeCompleted
+            ? [TaskStatus.Pending, TaskStatus.Overdue, TaskStatus.Completed]
+            : [TaskStatus.Pending, TaskStatus.Overdue],
+          sort: 'fireAt',
+        });
+    }
   }
 }

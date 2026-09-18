@@ -4,6 +4,7 @@ import type { User } from '@domain/user';
 import { EnsureUserUsecase } from '@usecases/user';
 import { InvalidInputError } from '@common/errors';
 import { AuthService } from './auth.service';
+import { DEFAULT_USER_SETTINGS } from '@domain/user';
 
 const BOT_TOKEN = 'test-bot-token:AAHtest';
 const JWT_SECRET = 'test-jwt-secret-must-be-32+-chars-abcdef';
@@ -21,6 +22,8 @@ describe('AuthService', () => {
     lastName: null,
     username: null,
     timezone: null,
+    settings: structuredClone(DEFAULT_USER_SETTINGS),
+    categories: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -58,7 +61,9 @@ describe('AuthService', () => {
     expect(typeof result.token).toBe('string');
     expect(result.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    const decoded = jwtService.verify<{ sub: string; tgId: number }>(result.token);
+    const decoded = jwtService.verify<{ sub: string; tgId: number }>(
+      result.token,
+    );
     expect(decoded.sub).toBe('user-1');
     expect(decoded.tgId).toBe(42);
   });
