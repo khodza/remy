@@ -70,6 +70,11 @@ export class UserRepositoryImpl implements UserRepository {
     return doc ? this.documentToEntity(doc) : null;
   }
 
+  public async findByCalendarToken(token: string): Promise<User | null> {
+    const doc = await this.model.findOne({ calendar_token: token });
+    return doc ? this.documentToEntity(doc) : null;
+  }
+
   public async update(params: UpdateUserParams): Promise<User> {
     try {
       const updateData: Record<string, unknown> = {};
@@ -79,6 +84,8 @@ export class UserRepositoryImpl implements UserRepository {
         updateData['settings'] = params.settings;
       if (params.categories !== undefined)
         updateData['categories'] = params.categories;
+      if (params.calendarToken !== undefined)
+        updateData['calendar_token'] = params.calendarToken;
 
       const doc = await this.model.findByIdAndUpdate(
         params.id,
@@ -134,6 +141,7 @@ export class UserRepositoryImpl implements UserRepository {
             keywords: [...(c.keywords ?? [])],
           }))
         : null,
+      calendarToken: document.calendar_token ?? null,
       createdAt: document.created_at,
       updatedAt: document.updated_at,
     };

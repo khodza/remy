@@ -46,6 +46,7 @@ describe('SendPendingRemindersUsecase', () => {
     notificationGateway = {
       sendReminder: jest.fn().mockResolvedValue({ messageId: 900 }),
       sendDigest: jest.fn(),
+      sendDocument: jest.fn(),
     };
     conversations = mockConversationRepository();
     const users = mockUserRepository(

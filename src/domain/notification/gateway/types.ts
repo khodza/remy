@@ -21,6 +21,14 @@ export type SendReminderInput = {
   sourceQuote?: { text: string; from: string | null } | null;
 };
 
+/** A text file sent to the chat as a document (exports). */
+export type SendDocumentInput = {
+  chatId: number;
+  filename: string;
+  content: string;
+  caption: string;
+};
+
 export type SentReminder = {
   /** Telegram message id, so replies to the reminder can be linked to the task. */
   messageId: number | null;

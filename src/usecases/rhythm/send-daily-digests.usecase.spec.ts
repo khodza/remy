@@ -77,6 +77,7 @@ describe('SendDailyDigestsUsecase', () => {
     const notifications: jest.Mocked<NotificationGateway> = {
       sendReminder: jest.fn(),
       sendDigest: jest.fn().mockResolvedValue({ messageId: 700 }),
+      sendDocument: jest.fn(),
     };
     const usecase = new SendDailyDigestsUsecase(
       users,

@@ -24,6 +24,7 @@ describe('AuthService', () => {
     timezone: null,
     settings: structuredClone(DEFAULT_USER_SETTINGS),
     categories: null,
+    calendarToken: null,
     createdAt: now,
     updatedAt: now,
   };

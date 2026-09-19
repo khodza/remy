@@ -8,7 +8,12 @@ import type { UserRepository } from '@domain/user';
 import { UserNotFoundError } from '@domain/user';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { ParseTextRequest } from '@contract/remy-contract';
+import {
+  ParseListRequest,
+  ParseTextRequest,
+  type ImportDraftsWire,
+} from '@contract/remy-contract';
+import { ParseListUsecase } from '@usecases/data';
 import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
 import type { AuthContext } from '../types';
 
@@ -26,7 +31,32 @@ export class AiController {
     private readonly taskParser: TaskParserGateway,
     @Inject(Domain.User.Repository)
     private readonly userRepository: UserRepository,
+    private readonly parseListUsecase: ParseListUsecase,
   ) {}
+
+  /** A pasted list → drafts to review in the app; nothing is saved. */
+  @Post('parse-list')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async parseList(
+    @CurrentUser() auth: AuthContext,
+    @Body(new ZodValidationPipe(ParseListRequest)) dto: ParseListRequest,
+  ): Promise<ImportDraftsWire> {
+    const drafts = await this.parseListUsecase.execute({
+      userId: auth.userId,
+      text: dto.text,
+    });
+    return {
+      tasks: drafts.map((d) => ({
+        description: d.description,
+        notes: d.notes,
+        scheduledAt: d.scheduledAt ? d.scheduledAt.toISOString() : null,
+        recurrence: d.recurrence ? recurrenceToWire(d.recurrence) : null,
+        priority: d.priority,
+        categoryId: d.categoryId,
+        leadMinutes: d.leadMinutes,
+      })),
+    };
+  }
 
   @Post('parse')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })

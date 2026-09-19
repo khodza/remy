@@ -105,7 +105,14 @@ export function briefKeyboard(hasOverdue: boolean): InlineKeyboard | undefined {
   const appUrl = getEnv().MINI_APP_URL;
   if (appUrl) {
     if (any) keyboard.row();
-    keyboard.webApp('📋 Open Remy', appUrl);
+    // With something overdue the app opens on Catch-up (one card at a time).
+    if (hasOverdue) {
+      const url = new URL(appUrl);
+      url.searchParams.set('screen', 'catchup');
+      keyboard.webApp('🧹 Catch up in the app', url.toString());
+    } else {
+      keyboard.webApp('📋 Open Remy', appUrl);
+    }
     any = true;
   }
   return any ? keyboard : undefined;

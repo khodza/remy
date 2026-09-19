@@ -11,6 +11,7 @@ import { NotificationModule } from '../notification/notification.module';
 import { AssistantModule } from '../assistant/assistant.module';
 import { ConversationModule } from '../conversation/conversation.module';
 import { RhythmModule } from '../rhythm/rhythm.module';
+import { DataModule } from '../data/data.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { RhythmModule } from '../rhythm/rhythm.module';
     AssistantModule,
     ConversationModule,
     RhythmModule,
+    DataModule,
   ],
   providers: [
     AssistantResponder,

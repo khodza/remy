@@ -11,6 +11,7 @@ export type UserDocument = {
   /** Stored as the domain shape; missing keys fall back to defaults on read. */
   settings?: Partial<UserSettings> | null;
   categories?: Category[] | null;
+  calendar_token?: string | null;
   /** Local dates (YYYY-MM-DD) the digests were last sent for. */
   last_brief_on?: string | null;
   last_review_on?: string | null;

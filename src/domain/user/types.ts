@@ -108,6 +108,11 @@ export type User = {
    * then. An empty array means the user deleted them all on purpose.
    */
   categories: Category[] | null;
+  /**
+   * Secret in the private calendar feed URL; null when the feed is off.
+   * Anyone with the link can read the feed, so it can be replaced.
+   */
+  calendarToken: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -125,4 +130,5 @@ export type UpdateUserParams = {
   timezone?: string;
   settings?: UserSettings;
   categories?: Category[];
+  calendarToken?: string | null;
 };

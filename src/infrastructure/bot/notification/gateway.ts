@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { GrammyError, InlineKeyboard } from 'grammy';
+import { GrammyError, InlineKeyboard, InputFile } from 'grammy';
 import { formatInTimeZone } from 'date-fns-tz';
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { NotificationGateway } from '@domain/notification/gateway';
 import {
+  SendDocumentInput,
   SendReminderInput,
   SentReminder,
 } from '@domain/notification/gateway/types';
@@ -68,6 +69,27 @@ export class NotificationGatewayImpl implements NotificationGateway {
         (error.error_code === 400 || error.error_code === 403);
       throw new NotificationFailedError(
         `Failed to send ${digest.kind}`,
+        error,
+        { permanent },
+      );
+    }
+  }
+
+  public async sendDocument(input: SendDocumentInput): Promise<void> {
+    try {
+      await this.botService
+        .getBot()
+        .api.sendDocument(
+          input.chatId,
+          new InputFile(Buffer.from(input.content, 'utf8'), input.filename),
+          { caption: input.caption, parse_mode: 'HTML' },
+        );
+    } catch (error) {
+      const permanent =
+        error instanceof GrammyError &&
+        (error.error_code === 400 || error.error_code === 403);
+      throw new NotificationFailedError(
+        `Failed to send ${input.filename}`,
         error,
         { permanent },
       );

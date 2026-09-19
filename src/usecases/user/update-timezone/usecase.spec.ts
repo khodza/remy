@@ -20,6 +20,7 @@ describe('UpdateTimezoneUsecase', () => {
     timezone: 'UTC',
     settings: structuredClone(DEFAULT_USER_SETTINGS),
     categories: null,
+    calendarToken: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -32,6 +33,7 @@ describe('UpdateTimezoneUsecase', () => {
       update: jest.fn(),
       listAll: jest.fn(),
       claimDigest: jest.fn(),
+      findByCalendarToken: jest.fn(),
     };
 
     usecase = new UpdateTimezoneUsecase(userRepository);

@@ -17,13 +17,16 @@ import { Domain } from '@common/tokens';
 import type { TaskRepository } from '@domain/task';
 import { formatInTimeZone } from 'date-fns-tz';
 import {
+  CalendarFeed,
   Category,
   CategoryList,
   DEFAULT_SETTINGS,
   ErrorBody,
+  ExportResult,
   Settings,
   wire,
 } from '@contract/remy-contract';
+import type { InterpreterInput } from '@domain/assistant';
 
 const MOCK_TG_ID = 123456789;
 
@@ -38,6 +41,31 @@ describe('Remy API (e2e)', () => {
       message_id: ++messageSeq,
     }),
   );
+  const sendDocument = jest.fn(
+    async (_chatId: number, _file: unknown, _other?: unknown) => ({
+      message_id: ++messageSeq,
+    }),
+  );
+  // The assistant without OpenAI, one line at a time: "dentist" gets a
+  // time tomorrow, anything else becomes a todo.
+  const interpret = jest.fn(async (input: InterpreterInput) => {
+    const dentist = /dentist/i.test(input.text);
+    return {
+      intent: 'create' as const,
+      tasks: [
+        {
+          title: dentist ? 'Dentist' : 'Buy milk',
+          dueAt: dentist ? new Date(input.now.getTime() + 24 * 3600_000) : null,
+          recurrence: null,
+          priority: dentist ? ('high' as const) : ('normal' as const),
+          // Whatever category still exists (earlier tests delete some).
+          categoryName: dentist ? (input.categories[0] ?? null) : null,
+          leadMinutes: null,
+          notes: null,
+        },
+      ],
+    };
+  });
 
   const api = () => request(app.getHttpServer());
   const authed = (req: request.Test) =>
@@ -60,7 +88,9 @@ describe('Remy API (e2e)', () => {
     // are read lazily (getEnv() re-reads process.env under NODE_ENV=test).
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(TelegramBotService)
-      .useValue({ getBot: () => ({ api: { sendMessage } }) })
+      .useValue({ getBot: () => ({ api: { sendMessage, sendDocument } }) })
+      .overrideProvider(Domain.Assistant.InterpreterGateway)
+      .useValue({ interpret })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -420,5 +450,107 @@ describe('Remy API (e2e)', () => {
     );
     expect(brief?.[1]).toContain('Water the plants');
     expect((await digests.execute()).sent).toBe(0); // once per local day
+  });
+  it('calendar feed: off by default; a public .ics once on; a new link retires the old one', async () => {
+    const off = CalendarFeed.parse(
+      (await authed(api().get('/api/v1/calendar/feed')).expect(200)).body,
+    );
+    expect(off).toEqual({ enabled: false, path: null });
+
+    await authed(api().post('/api/v1/tasks/structured'))
+      .send({
+        description: 'Standup; notes, then coffee',
+        scheduledAt: new Date(Date.now() + 3 * 3600_000).toISOString(),
+        recurrence: { type: 'weekdays' },
+      })
+      .expect(201);
+
+    const on = CalendarFeed.parse(
+      (await authed(api().post('/api/v1/calendar/feed')).expect(201)).body,
+    );
+    expect(on.path).toMatch(/^\/calendar\/[A-Za-z0-9_-]{43}\.ics$/);
+
+    // No JWT: the secret in the path is the credential.
+    const ics = await api().get(`/api/v1${on.path}`).expect(200);
+    expect(ics.headers['content-type']).toContain('text/calendar');
+    expect(ics.text).toContain('BEGIN:VCALENDAR');
+    expect(ics.text).toContain(
+      String.raw`SUMMARY:Standup\; notes\, then coffee`,
+    );
+    expect(ics.text).toContain('RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR');
+    expect(ics.text).toContain('DTSTART;TZID=Asia/Tashkent:');
+
+    const renewed = CalendarFeed.parse(
+      (await authed(api().post('/api/v1/calendar/feed')).expect(201)).body,
+    );
+    expect(renewed.path).not.toBe(on.path);
+    await api().get(`/api/v1${on.path}`).expect(404);
+    await api().get(`/api/v1${renewed.path}`).expect(200);
+
+    await authed(api().delete('/api/v1/calendar/feed')).expect(200);
+    await api().get(`/api/v1${renewed.path}`).expect(404);
+    await api().get('/api/v1/calendar/not-a-token.ics').expect(404);
+    await api().get('/api/v1/calendar/feed').expect(401);
+  });
+
+  it('export: the bot sends the file to the owner chat', async () => {
+    sendDocument.mockClear();
+    const res = await authed(api().post('/api/v1/export'))
+      .send({ format: 'csv' })
+      .expect(200);
+    const result = ExportResult.parse(res.body);
+    expect(result.filename).toMatch(/^remy-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(result.tasks).toBeGreaterThan(0);
+    expect(sendDocument).toHaveBeenCalledTimes(1);
+    expect(sendDocument.mock.calls[0]![0]).toBe(MOCK_TG_ID);
+
+    await authed(api().post('/api/v1/export'))
+      .send({ format: 'pdf' })
+      .expect(400);
+  });
+
+  it('list import: parse into reviewable drafts, then create them in one go', async () => {
+    const parsed = await authed(api().post('/api/v1/ai/parse-list'))
+      .send({ text: '- dentist tomorrow\n- buy milk' })
+      .expect(201);
+    const { tasks: drafts } = wire.ImportDrafts.parse(parsed.body);
+    expect(drafts.map((d) => [d.description, d.scheduledAt === null])).toEqual([
+      ['Dentist', false],
+      ['Buy milk', true],
+    ]);
+    expect(drafts[0]!.categoryId).toEqual(expect.any(String));
+
+    const created = await authed(api().post('/api/v1/tasks/import'))
+      .send({
+        tasks: drafts.map((d) => ({
+          description: d.description,
+          scheduledAt: d.scheduledAt,
+          priority: d.priority,
+          categoryId: d.categoryId,
+        })),
+      })
+      .expect(201);
+    const { tasks } = wire.TaskList.parse(created.body);
+    expect(tasks.map((t) => [t.description, t.kind])).toEqual([
+      ['Dentist', 'reminder'],
+      ['Buy milk', 'todo'],
+    ]);
+
+    // A bad row fails the whole import; nothing half-saved.
+    const before = wire.TaskList.parse(
+      (await authed(api().get('/api/v1/tasks?view=inbox')).expect(200)).body,
+    ).tasks.length;
+    await authed(api().post('/api/v1/tasks/import'))
+      .send({
+        tasks: [
+          { description: 'Fine' },
+          { description: 'Broken', recurrence: { type: 'daily' } },
+        ],
+      })
+      .expect(400);
+    const after = wire.TaskList.parse(
+      (await authed(api().get('/api/v1/tasks?view=inbox')).expect(200)).body,
+    ).tasks.length;
+    expect(after).toBe(before);
   });
 });

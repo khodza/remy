@@ -16,6 +16,9 @@ import { AiController } from './controllers/ai.controller';
 import { HealthController } from './controllers/health.controller';
 import { SettingsController } from './controllers/settings.controller';
 import { CategoryController } from './controllers/category.controller';
+import { CalendarController } from './controllers/calendar.controller';
+import { ExportController } from './controllers/export.controller';
+import { DataModule } from '../data/data.module';
 import { getEnv } from '@common/config';
 import { GetSettingsUsecase, UpdateSettingsUsecase } from '@usecases/settings';
 import {
@@ -43,6 +46,7 @@ import {
     TaskModule,
     UserModule,
     OpenAIModule,
+    DataModule,
   ],
   controllers: [
     AuthController,
@@ -51,6 +55,8 @@ import {
     AiController,
     SettingsController,
     CategoryController,
+    CalendarController,
+    ExportController,
     HealthController,
   ],
   providers: [

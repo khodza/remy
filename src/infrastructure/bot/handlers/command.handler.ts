@@ -11,6 +11,7 @@ import type { ConversationRepository } from '@domain/conversation';
 import { Domain } from '@common/tokens';
 import { getEnv } from '@common/config';
 import { DigestBuilder, briefTaskIds } from '@usecases/rhythm';
+import { ExportDataUsecase } from '@usecases/data';
 import { presentBrief } from '../presenters/rhythm.presenter';
 
 function humanDelay(minutes: number): string {
@@ -26,6 +27,10 @@ export const BOT_COMMANDS = [
   { command: 'list', description: 'Show your pending reminders' },
   { command: 'delete', description: 'Delete a reminder' },
   { command: 'settings', description: 'Timezone, brief times, quiet hours' },
+  {
+    command: 'export',
+    description: 'Everything as a file (CSV, or /export json)',
+  },
   { command: 'help', description: 'How to use Remy' },
 ] as const;
 
@@ -53,7 +58,25 @@ export class CommandHandler {
     private readonly digestBuilder: DigestBuilder,
     @Inject(Domain.Conversation.Repository)
     private readonly conversations: ConversationRepository,
+    private readonly exportData: ExportDataUsecase,
   ) {}
+
+  /** "/export" sends a CSV, "/export json" the full JSON record. */
+  public async handleExport(ctx: Context): Promise<void> {
+    if (ctx.from === undefined) return;
+    const format = /\bjson\b/i.test(ctx.message?.text ?? '') ? 'json' : 'csv';
+    try {
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
+      const result = await this.exportData.execute({ userId: user.id, format });
+      if (result.tasks === 0)
+        await ctx.reply('Nothing to export yet: you have no reminders.');
+    } catch (error) {
+      console.error('Export failed:', error);
+      await ctx.reply('❌ Could not build the export. Try again in a minute.');
+    }
+  }
 
   /** The morning brief, on demand. Replies to it act on its numbered tasks. */
   public async handleToday(ctx: Context): Promise<void> {
@@ -313,6 +336,7 @@ export class CommandHandler {
         `<b>Commands</b>\n` +
         `/today – your day at a glance · /list – pending reminders\n` +
         `/delete – delete one · /settings – times, quiet hours, nudges\n` +
+        `/export – everything as a CSV file (/export json for the full record)\n` +
         `/help – this message`,
       { parse_mode: 'HTML' },
     );

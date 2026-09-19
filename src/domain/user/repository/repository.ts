@@ -5,6 +5,8 @@ export interface UserRepository {
   save(params: CreateUserParams): Promise<User>;
   findByTelegramUserId(telegramUserId: number): Promise<User | null>;
   findById(id: string): Promise<User | null>;
+  /** The owner of a calendar feed link, or null for an unknown/old token. */
+  findByCalendarToken(token: string): Promise<User | null>;
   update(params: UpdateUserParams): Promise<User>;
   listAll(): Promise<User[]>;
   /**

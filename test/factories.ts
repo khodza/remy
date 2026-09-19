@@ -82,6 +82,7 @@ export function makeUser(overrides: Partial<User> = {}): User {
     timezone: 'UTC',
     settings: structuredClone(DEFAULT_USER_SETTINGS),
     categories: null,
+    calendarToken: null,
     createdAt,
     updatedAt: createdAt,
     ...overrides,
@@ -110,6 +111,9 @@ export function mockUserRepository(
     save: jest.fn(async (_params) => user),
     findByTelegramUserId: jest.fn(async (_telegramUserId: number) => user),
     findById: jest.fn(async (id: string) => (id === user.id ? user : null)),
+    findByCalendarToken: jest.fn(async (token: string) =>
+      user.calendarToken !== null && token === user.calendarToken ? user : null,
+    ),
     update: jest.fn(async (params) => {
       user = {
         ...user,
@@ -117,6 +121,9 @@ export function mockUserRepository(
         ...(params.settings !== undefined ? { settings: params.settings } : {}),
         ...(params.categories !== undefined
           ? { categories: params.categories }
+          : {}),
+        ...(params.calendarToken !== undefined
+          ? { calendarToken: params.calendarToken }
           : {}),
       };
       return user;

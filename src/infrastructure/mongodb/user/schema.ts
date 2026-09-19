@@ -13,6 +13,7 @@ export const UserSchema = new Schema<UserDocument>(
     last_review_on: { type: String, default: null },
     last_wrap_on: { type: String, default: null },
     settings: { type: Schema.Types.Mixed, default: null },
+    calendar_token: { type: String, default: null },
     categories: {
       type: [
         new Schema(
@@ -33,5 +34,15 @@ export const UserSchema = new Schema<UserDocument>(
     versionKey: false,
     timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
     collection: 'users',
+  },
+);
+
+// Feed links are looked up by token; unique among users that have one
+// (a plain unique index would treat every null as a duplicate).
+UserSchema.index(
+  { calendar_token: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { calendar_token: { $type: 'string' } },
   },
 );

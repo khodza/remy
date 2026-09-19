@@ -1,3 +1,4 @@
+import type { ImportTasksUsecase } from '@usecases/data';
 import { ForbiddenException } from '@nestjs/common';
 import type { TaskRepository } from '@domain/task';
 import { TaskNotFoundError, TaskStatus } from '@domain/task';
@@ -61,6 +62,7 @@ describe('TaskController', () => {
       update: jest.fn(),
       listAll: jest.fn(),
       claimDigest: jest.fn(),
+      findByCalendarToken: jest.fn(),
     };
     listTasks = { execute: jest.fn() };
     processText = { execute: jest.fn() };
@@ -80,6 +82,7 @@ describe('TaskController', () => {
       processText as unknown as ProcessTextMessageUsecase,
       processVoice as unknown as ProcessVoiceMessageUsecase,
       createStructured as unknown as CreateStructuredTaskUsecase,
+      { execute: jest.fn() } as unknown as ImportTasksUsecase,
       updateTask as unknown as UpdateTaskUsecase,
       markComplete as unknown as MarkCompleteUsecase,
       reopenTask as unknown as ReopenTaskUsecase,

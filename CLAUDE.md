@@ -129,6 +129,20 @@ The domain layer must not import the contract; the HTTP layer maps.
   `resolveReviewItem`) so the message can be redrawn after each tap.
 - Inline keyboards: never leave a trailing empty `row()` (build rows with
   "row() before every item but the first").
+- Your data (`usecases/data`, `DataModule`): the calendar feed is
+  `GET /calendar/<token>.ics`, **the only route without auth**; the 32-byte
+  token in the path is the credential (`user.calendarToken`, partial unique
+  index; POST `/calendar/feed` replaces it, DELETE turns it off, and every
+  bad/old token is the same 404). The `.ics` is built by `common/ical.ts`
+  (pure; one-offs in UTC, series with `TZID` + RRULE, a snoozed occurrence
+  as a RECURRENCE-ID override). Exports (`common/export-data.ts`, CSV with
+  BOM and formula-neutralised cells, or JSON) are **sent by the bot as a
+  document** (`NotificationGateway.sendDocument`): Mini Apps can't download
+  files reliably on iOS. `/export` does the same from the chat. List import
+  is two steps: `POST /ai/parse-list` returns drafts (nothing saved; the
+  interpreter reads **each line separately**, because on a whole list
+  gpt-4o-mini dropped times), then `POST /tasks/import` validates every
+  row before creating any.
 - Callbacks are answered exactly once in `CallbackHandler.handle`; message
   edits go through `ignoreNotModified`.
 - `noUncheckedIndexedAccess` is on: index access returns `T | undefined`.

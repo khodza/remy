@@ -1,4 +1,9 @@
-import { presentBrief, presentReview, presentWrap } from './rhythm.presenter';
+import {
+  briefKeyboard,
+  presentBrief,
+  presentReview,
+  presentWrap,
+} from './rhythm.presenter';
 import type { MorningBrief, ReviewState } from '@domain/rhythm';
 import { makeTask } from '@test/factories';
 
@@ -167,5 +172,33 @@ describe('presentWrap', () => {
     expect(reply.html).toContain(
       '📅 Next 7 days: 9 scheduled · busiest Tue 22 Sep (4)',
     );
+  });
+});
+
+describe('briefKeyboard', () => {
+  const buttons = (hasOverdue: boolean) =>
+    (briefKeyboard(hasOverdue)?.inline_keyboard ?? []).flat();
+
+  beforeEach(() => {
+    process.env['MINI_APP_URL'] = 'https://remy.example.com/app';
+  });
+  afterEach(() => {
+    delete process.env['MINI_APP_URL'];
+  });
+
+  it('opens Catch-up when something is overdue, the app otherwise', () => {
+    expect(buttons(true)).toEqual([
+      expect.objectContaining({ callback_data: 'brief:overdue' }),
+      expect.objectContaining({
+        text: '🧹 Catch up in the app',
+        web_app: { url: 'https://remy.example.com/app?screen=catchup' },
+      }),
+    ]);
+    expect(buttons(false)).toEqual([
+      expect.objectContaining({
+        text: '📋 Open Remy',
+        web_app: { url: 'https://remy.example.com/app' },
+      }),
+    ]);
   });
 });

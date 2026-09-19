@@ -36,9 +36,11 @@ import {
   SnoozeTaskUsecase,
   UpdateTaskUsecase,
 } from '@usecases/task';
+import { ImportTasksUsecase } from '@usecases/data';
 import {
   CreateTaskFromTextRequest,
   CreateTaskStructuredRequest,
+  ImportTasksRequest,
   DelayTaskRequest,
   ListTasksQuery,
   SnoozeTaskRequest,
@@ -67,6 +69,7 @@ export class TaskController {
     private readonly processTextMessageUsecase: ProcessTextMessageUsecase,
     private readonly processVoiceMessageUsecase: ProcessVoiceMessageUsecase,
     private readonly createStructuredTaskUsecase: CreateStructuredTaskUsecase,
+    private readonly importTasksUsecase: ImportTasksUsecase,
     private readonly updateTaskUsecase: UpdateTaskUsecase,
     private readonly markCompleteUsecase: MarkCompleteUsecase,
     private readonly reopenTaskUsecase: ReopenTaskUsecase,
@@ -149,6 +152,37 @@ export class TaskController {
         : {}),
     });
     return toTaskWire(task);
+  }
+
+  /** Reviewed drafts from a pasted list, created in one go. */
+  @Post('import')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async import(
+    @CurrentUser() auth: AuthContext,
+    @Body(new ZodValidationPipe(ImportTasksRequest)) dto: ImportTasksRequest,
+  ): Promise<{ tasks: TaskWire[] }> {
+    const created = await this.importTasksUsecase.execute({
+      userId: auth.userId,
+      tasks: dto.tasks.map((t) => ({
+        description: t.description,
+        ...(t.notes !== undefined ? { notes: t.notes } : {}),
+        scheduledAt: t.scheduledAt ? new Date(t.scheduledAt) : null,
+        ...(t.recurrence !== undefined
+          ? {
+              recurrence: t.recurrence
+                ? recurrenceFromWire(t.recurrence)
+                : null,
+            }
+          : {}),
+        ...(t.priority !== undefined ? { priority: t.priority } : {}),
+        ...(t.categoryId !== undefined ? { categoryId: t.categoryId } : {}),
+        ...(t.leadMinutes !== undefined ? { leadMinutes: t.leadMinutes } : {}),
+        ...(t.originalText !== undefined
+          ? { originalText: t.originalText }
+          : {}),
+      })),
+    });
+    return { tasks: created.map((task) => toTaskWire(task)) };
   }
 
   @Post('voice')
