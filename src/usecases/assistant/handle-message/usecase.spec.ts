@@ -68,6 +68,8 @@ describe('HandleMessageUsecase', () => {
     jest.useFakeTimers({ now });
     tasks = mockTaskRepository();
     // Mongo returns todos first (null fire time).
+    // Candidates come from two queries (dated, todos); the mock returns the
+    // same list for both and the use case de-duplicates by id.
     tasks.find.mockResolvedValue([plov, mom, dentist]);
     tasks.create.mockImplementation(async (p) =>
       makeTask({
@@ -145,6 +147,33 @@ describe('HandleMessageUsecase', () => {
         pendingQuestion: null,
         quoted: null,
       });
+    });
+
+    it('dated tasks and todos are fetched separately, so a long Inbox cannot hide dated tasks', async () => {
+      tasks.find.mockImplementation(async (filter) =>
+        filter.kind === 'todo'
+          ? [plov]
+          : filter.kind === 'reminder'
+            ? [mom, dentist]
+            : [],
+      );
+      interpretAs({ intent: 'chat', reply: 'hi' });
+      await usecase.execute(input());
+      expect(tasks.find).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'reminder', sort: 'dueAt', limit: 45 }),
+      );
+      expect(tasks.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'todo',
+          sort: 'createdAtDesc',
+          limit: 15,
+        }),
+      );
+      expect(seen().candidates.map((c) => c.id)).toEqual([
+        'mom',
+        'dentist',
+        'plov',
+      ]);
     });
 
     it('a reply to a numbered bot list puts those tasks first, in that order', async () => {
@@ -402,7 +431,8 @@ describe('HandleMessageUsecase', () => {
   it('query: "tomorrow" asks the repository for the user\'s next local day', async () => {
     interpretAs({ intent: 'query', range: 'tomorrow', search: null });
     tasks.find
-      .mockResolvedValueOnce([plov, mom, dentist])
+      .mockResolvedValueOnce([mom, dentist]) // dated candidates
+      .mockResolvedValueOnce([plov]) // todo candidates
       .mockResolvedValueOnce([dentist]);
     const result = await usecase.execute(
       input({ text: "what's on tomorrow?" }),

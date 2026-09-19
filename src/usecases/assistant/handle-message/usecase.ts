@@ -22,7 +22,13 @@ import { UpdateTaskUsecase } from '../../task/update-task';
 import { UndoRecorder } from '../undo-recorder';
 import type { AssistantResult, HandleMessageInput } from './types';
 
-const MAX_CANDIDATES = 60;
+/**
+ * The model sees at most this many dated tasks plus this many todos. Two
+ * separate queries: sorted together, Mongo puts undated todos first, so a
+ * long Inbox would push every dated task out of a single limited query.
+ */
+const MAX_DATED_CANDIDATES = 45;
+const MAX_TODO_CANDIDATES = 15;
 const PENDING_QUESTION_TTL_MINUTES = 5;
 const PENDING_FORWARD_TTL_MINUTES = 15;
 const QUOTED_NOTES_MAX = 1000;
@@ -77,22 +83,32 @@ export class HandleMessageUsecase {
 
   public async execute(input: HandleMessageInput): Promise<AssistantResult> {
     const now = new Date();
-    const [state, open, categories, replyToTaskIds] = await Promise.all([
-      this.conversations.getState(input.chatId),
-      this.tasks.find({
-        userId: input.userId,
-        statuses: [TaskStatus.Pending],
-        sort: 'dueAt',
-        limit: MAX_CANDIDATES,
-      }),
-      this.listCategories.execute({ userId: input.userId }),
-      input.replyToMessageId !== undefined
-        ? this.conversations.findLinkedTaskIds(
-            input.chatId,
-            input.replyToMessageId,
-          )
-        : Promise.resolve([]),
-    ]);
+    const [state, dated, todos, categories, replyToTaskIds] = await Promise.all(
+      [
+        this.conversations.getState(input.chatId),
+        this.tasks.find({
+          userId: input.userId,
+          statuses: [TaskStatus.Pending],
+          kind: 'reminder',
+          sort: 'dueAt',
+          limit: MAX_DATED_CANDIDATES,
+        }),
+        this.tasks.find({
+          userId: input.userId,
+          statuses: [TaskStatus.Pending],
+          kind: 'todo',
+          sort: 'createdAtDesc',
+          limit: MAX_TODO_CANDIDATES,
+        }),
+        this.listCategories.execute({ userId: input.userId }),
+        input.replyToMessageId !== undefined
+          ? this.conversations.findLinkedTaskIds(
+              input.chatId,
+              input.replyToMessageId,
+            )
+          : Promise.resolve([]),
+      ],
+    );
 
     const pendingQuestion =
       state.pendingQuestion &&
@@ -115,7 +131,10 @@ export class HandleMessageUsecase {
     // When the user replies to a numbered list (an agenda, a multi-create
     // confirmation), those tasks lead in the same order, so "done with 2"
     // means the 2 they are looking at.
-    const sorted = [...open].sort(byDueThenTodo);
+    const open = [
+      ...new Map([...dated, ...todos].map((t) => [t.id, t])).values(),
+    ];
+    const sorted = open.sort(byDueThenTodo);
     const linked = replyToTaskIds
       .map((id) => sorted.find((t) => t.id === id))
       .filter((t): t is Task => t !== undefined);
