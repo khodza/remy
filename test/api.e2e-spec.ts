@@ -11,6 +11,11 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { TelegramBotService } from '@infra/bot/bot.service';
+import { SendPendingRemindersUsecase } from '@usecases/task/send-pending-reminders';
+import { SendDailyDigestsUsecase } from '@usecases/rhythm';
+import { Domain } from '@common/tokens';
+import type { TaskRepository } from '@domain/task';
+import { formatInTimeZone } from 'date-fns-tz';
 import {
   Category,
   CategoryList,
@@ -26,6 +31,13 @@ describe('Remy API (e2e)', () => {
   let mongod: MongoMemoryServer;
   let app: INestApplication;
   let token: string;
+  // Everything the bot "sends" lands here.
+  let messageSeq = 1000;
+  const sendMessage = jest.fn(
+    async (_chatId: number, _text: string, _other?: unknown) => ({
+      message_id: ++messageSeq,
+    }),
+  );
 
   const api = () => request(app.getHttpServer());
   const authed = (req: request.Test) =>
@@ -48,7 +60,7 @@ describe('Remy API (e2e)', () => {
     // are read lazily (getEnv() re-reads process.env under NODE_ENV=test).
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(TelegramBotService)
-      .useValue({ getBot: () => ({ api: { sendMessage: jest.fn() } }) })
+      .useValue({ getBot: () => ({ api: { sendMessage } }) })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -361,5 +373,52 @@ describe('Remy API (e2e)', () => {
       200,
     );
     expect(wire.Task.parse(task.body).categoryId).toBeNull();
+  });
+
+  it('the daily rhythm runs inside the real app: reminder → nudge scheduled, brief once per day', async () => {
+    // Quiet hours would hold the reminder if this runs at night in Tashkent.
+    await authed(api().patch('/api/v1/settings'))
+      .send({
+        quietHours: { enabled: false },
+        morningBrief: {
+          enabled: true,
+          time: formatInTimeZone(new Date(), 'Asia/Tashkent', 'HH:mm'),
+        },
+      })
+      .expect(200);
+
+    const created = await authed(api().post('/api/v1/tasks/structured'))
+      .send({
+        description: 'Water the plants',
+        scheduledAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      })
+      .expect(201);
+    const id: string = created.body.id;
+
+    sendMessage.mockClear();
+    const reminders = await app.get(SendPendingRemindersUsecase).execute();
+    expect(reminders.sentCount).toBeGreaterThanOrEqual(1);
+    const reminderCall = sendMessage.mock.calls.find((c) =>
+      String(c[1]).includes('Water the plants'),
+    );
+    expect(reminderCall?.[1]).toContain('Reminder');
+    // Escalation is on by default: the first nudge is 30 minutes out.
+    const stored = await app
+      .get<TaskRepository>(Domain.Task.Repository)
+      .findById(id);
+    expect(stored?.nudgeAt?.getTime()).toBeGreaterThan(
+      Date.now() + 29 * 60_000,
+    );
+    expect(stored?.nudgeCount).toBe(0);
+
+    sendMessage.mockClear();
+    const digests = app.get(SendDailyDigestsUsecase);
+    const first = await digests.execute();
+    expect(first.sent).toBeGreaterThanOrEqual(1);
+    const brief = sendMessage.mock.calls.find((c) =>
+      String(c[1]).includes('Good morning'),
+    );
+    expect(brief?.[1]).toContain('Water the plants');
+    expect((await digests.execute()).sent).toBe(0); // once per local day
   });
 });

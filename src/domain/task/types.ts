@@ -94,6 +94,16 @@ export type Task = {
   leadMinutes: number | null;
   /** The occurrence (scheduledAt) the heads-up was already sent for. */
   leadSentFor: Date | null;
+  /**
+   * Next "still open" nudge for an ignored reminder (escalation). Set by the
+   * scheduler after the reminder is sent; cleared whenever the task gets a
+   * new time or a snooze.
+   */
+  nudgeAt: Date | null;
+  /** Nudges sent for the current occurrence. */
+  nudgeCount: number;
+  /** How many times this task was snoozed or delayed, ever. */
+  snoozeCount: number;
   status: TaskStatus;
   priority: Priority;
   categoryId: string | null;
@@ -143,6 +153,10 @@ export type UpdateTaskParams = {
   nextAttemptAt?: Date | null;
   leadMinutes?: number | null;
   leadSentFor?: Date | null;
+  nudgeAt?: Date | null;
+  nudgeCount?: number;
+  /** +1 on snoozeCount. */
+  incrementSnoozeCount?: boolean;
   status?: TaskStatus;
   priority?: Priority;
   categoryId?: string | null;
@@ -161,13 +175,15 @@ export type TaskFilter = {
   userId: string;
   statuses: TaskStatus[];
   kind?: TaskKind;
-  /** nextFireAt <= value */
-  fireAtOrBefore?: Date;
-  /** nextFireAt > value */
-  fireAfter?: Date;
+  /** due time (snoozedUntil ?? scheduledAt) <= value */
+  dueAtOrBefore?: Date;
+  /** due time > value */
+  dueAfter?: Date;
+  /** updatedAt >= value (activity window for stats) */
+  updatedAtOrAfter?: Date;
   /** completedAt >= value */
   completedAtOrAfter?: Date;
-  sort: 'fireAt' | 'completedAtDesc' | 'createdAtDesc';
+  sort: 'dueAt' | 'completedAtDesc' | 'createdAtDesc';
   limit?: number;
 };
 

@@ -3,10 +3,13 @@ import type { TaskRepository } from '@domain/task/repository';
 import type { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
 import type { ScheduledTask, Task } from '@domain/task';
+import { DEFAULT_USER_SETTINGS, type UserSettings } from '@domain/user';
 import {
   makeTask,
+  makeUser,
   mockConversationRepository,
   mockTaskRepository,
+  mockUserRepository,
 } from '@test/factories';
 
 describe('SendPendingRemindersUsecase', () => {
@@ -15,6 +18,7 @@ describe('SendPendingRemindersUsecase', () => {
   let notificationGateway: jest.Mocked<NotificationGateway>;
   let conversations: ReturnType<typeof mockConversationRepository>;
 
+  // 12:00Z = 17:00 in Tashkent: outside the default 23:00–07:00 quiet hours.
   const now = new Date('2026-04-16T12:00:00Z');
 
   /** Makes claimDueReminder hand out these tasks one per call, then null. */
@@ -31,19 +35,37 @@ describe('SendPendingRemindersUsecase', () => {
     });
   }
 
-  beforeEach(() => {
-    jest.useFakeTimers({ now });
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+  function setup(
+    settings: Partial<UserSettings> = {},
+    timezone = 'Asia/Tashkent',
+  ) {
     taskRepository = mockTaskRepository();
+    taskRepository.update.mockImplementation(async (p) =>
+      makeTask({ id: p.id }),
+    );
     notificationGateway = {
       sendReminder: jest.fn().mockResolvedValue({ messageId: 900 }),
+      sendDigest: jest.fn(),
     };
     conversations = mockConversationRepository();
+    const users = mockUserRepository(
+      makeUser({
+        timezone,
+        settings: { ...structuredClone(DEFAULT_USER_SETTINGS), ...settings },
+      }),
+    );
     usecase = new SendPendingRemindersUsecase(
       taskRepository,
       notificationGateway,
       conversations,
+      users,
     );
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers({ now });
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    setup();
   });
 
   afterEach(() => {
@@ -51,7 +73,7 @@ describe('SendPendingRemindersUsecase', () => {
     jest.restoreAllMocks();
   });
 
-  it('sends every claimed task and passes its timezone and fire time', async () => {
+  it('sends every claimed task with its timezone and due time, and links the message', async () => {
     const snoozed = makeTask({
       id: 'task-2',
       timezone: 'Asia/Tashkent',
@@ -74,16 +96,13 @@ describe('SendPendingRemindersUsecase', () => {
       notes: null,
       recurrence: { type: 'daily' },
     });
-    // The reminder message is linked to its task so a reply can snooze it.
     expect(conversations.linkMessage).toHaveBeenLastCalledWith({
       chatId: 12345,
       messageId: 900,
       taskIds: ['task-2'],
       kind: 'reminder',
     });
-    expect(result).toEqual({ sentCount: 2, failedCount: 0 });
-    // The claim already stamped lastSentAt; no second write per task.
-    expect(taskRepository.update).not.toHaveBeenCalled();
+    expect(result).toEqual({ sentCount: 2, failedCount: 0, heldCount: 0 });
   });
 
   it('claims before sending, so a crash can never duplicate a reminder', async () => {
@@ -109,137 +128,263 @@ describe('SendPendingRemindersUsecase', () => {
 
     const result = await usecase.execute();
 
-    expect(result).toEqual({ sentCount: 2, failedCount: 1 });
+    expect(result).toEqual({ sentCount: 2, failedCount: 1, heldCount: 0 });
   });
 
-  it('returns zeros when nothing is due', async () => {
-    const result = await usecase.execute();
-    expect(result).toEqual({ sentCount: 0, failedCount: 0 });
-    expect(notificationGateway.sendReminder).not.toHaveBeenCalled();
-  });
-
-  it('stops the run when claiming fails', async () => {
+  it('returns zeros when nothing is due, and stops when claiming fails', async () => {
+    expect(await usecase.execute()).toEqual({
+      sentCount: 0,
+      failedCount: 0,
+      heldCount: 0,
+    });
     taskRepository.claimDueReminder.mockRejectedValue(new Error('db error'));
-    const result = await usecase.execute();
-    expect(result).toEqual({ sentCount: 0, failedCount: 0 });
+    expect(await usecase.execute()).toEqual({
+      sentCount: 0,
+      failedCount: 0,
+      heldCount: 0,
+    });
   });
 
-  it('keeps the claim after a permanent failure so it is not retried every minute', async () => {
-    queueClaims([makeTask()]);
-    notificationGateway.sendReminder.mockRejectedValue(
+  it('keeps the claim after a permanent failure, releases it with a hold after a transient one', async () => {
+    queueClaims([makeTask({ id: 'blocked' })]);
+    notificationGateway.sendReminder.mockRejectedValueOnce(
       new NotificationFailedError('bot was blocked', undefined, {
         permanent: true,
       }),
     );
-
-    const result = await usecase.execute();
-
-    expect(result.failedCount).toBe(1);
+    await usecase.execute();
     expect(taskRepository.releaseReminderClaim).not.toHaveBeenCalled();
-  });
 
-  it('releases the claim with a retry hold after a transient failure', async () => {
     const previous = new Date('2026-04-15T12:00:00Z');
-    queueClaims([makeTask()], previous);
-    notificationGateway.sendReminder.mockRejectedValue(
-      new NotificationFailedError('too many requests'),
+    queueClaims([makeTask({ id: 'busy' })], previous);
+    notificationGateway.sendReminder.mockRejectedValueOnce(
+      new NotificationFailedError('429'),
     );
-
-    const result = await usecase.execute();
-
-    expect(result.failedCount).toBe(1);
+    await usecase.execute();
     expect(taskRepository.releaseReminderClaim).toHaveBeenCalledWith(
-      'task-1',
+      'busy',
       previous,
       new Date('2026-04-16T12:02:00Z'),
     );
   });
 
-  it('sends the "remind me before" heads-up first and records it before sending', async () => {
-    const dueAt = new Date('2026-04-16T12:30:00Z');
-    const task = makeTask({
-      scheduledAt: dueAt,
-      leadMinutes: 30,
-      nextFireAt: new Date('2026-04-16T12:00:00Z'),
-    });
-    queueClaims([task]);
-    taskRepository.update.mockResolvedValue(task);
+  describe('"remind me before"', () => {
+    it('sends the heads-up first and records it before sending', async () => {
+      const dueAt = new Date('2026-04-16T12:30:00Z');
+      queueClaims([
+        makeTask({
+          scheduledAt: dueAt,
+          leadMinutes: 30,
+          nextFireAt: new Date('2026-04-16T12:00:00Z'),
+        }),
+      ]);
 
-    await usecase.execute();
+      await usecase.execute();
 
-    expect(taskRepository.update).toHaveBeenCalledWith({
-      id: 'task-1',
-      leadSentFor: dueAt,
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        leadSentFor: dueAt,
+      });
+      expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'heads_up', dueAt }),
+      );
+      expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
+        notificationGateway.sendReminder.mock.invocationCallOrder[0]!,
+      );
     });
-    expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'heads_up', dueAt }),
-    );
-    expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
-      notificationGateway.sendReminder.mock.invocationCallOrder[0]!,
-    );
+
+    it('a heads-up that comes too late (held, or the bot was down) is sent as the reminder', async () => {
+      const dueAt = new Date('2026-04-16T11:50:00Z');
+      queueClaims([
+        makeTask({
+          scheduledAt: dueAt,
+          leadMinutes: 60,
+          nextFireAt: new Date('2026-04-16T10:50:00Z'),
+        }),
+      ]);
+
+      await usecase.execute();
+
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        leadSentFor: dueAt,
+      });
+      expect(notificationGateway.sendReminder).toHaveBeenCalledTimes(1);
+      expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'due', dueAt }),
+      );
+    });
   });
 
-  it('after the heads-up, the same task fires as a normal due reminder', async () => {
-    const dueAt = new Date('2026-04-16T12:00:00Z');
-    queueClaims([
-      makeTask({ scheduledAt: dueAt, leadMinutes: 30, leadSentFor: dueAt }),
-    ]);
-    await usecase.execute();
-    expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'due' }),
-    );
-    expect(taskRepository.update).not.toHaveBeenCalled();
+  describe('quiet hours', () => {
+    const inTheNight = new Date('2026-04-16T20:00:00Z'); // 01:00 in Tashkent
+
+    it('puts a reminder back until the window ends', async () => {
+      jest.setSystemTime(inTheNight);
+      const previous = new Date('2026-04-15T20:00:00Z');
+      queueClaims([makeTask()], previous);
+
+      const result = await usecase.execute();
+
+      expect(notificationGateway.sendReminder).not.toHaveBeenCalled();
+      expect(taskRepository.releaseReminderClaim).toHaveBeenCalledWith(
+        'task-1',
+        previous,
+        new Date('2026-04-17T02:00:00Z'), // 07:00 Tashkent
+      );
+      expect(result).toEqual({ sentCount: 0, failedCount: 0, heldCount: 1 });
+    });
+
+    it('lets high priority through when allowed, and only then', async () => {
+      jest.setSystemTime(inTheNight);
+      queueClaims([makeTask({ priority: 'high' })]);
+      await usecase.execute();
+      expect(notificationGateway.sendReminder).toHaveBeenCalledTimes(1);
+
+      setup({
+        quietHours: {
+          ...DEFAULT_USER_SETTINGS.quietHours,
+          allowHighPriority: false,
+        },
+      });
+      queueClaims([makeTask({ priority: 'high' })]);
+      await usecase.execute();
+      expect(notificationGateway.sendReminder).not.toHaveBeenCalled();
+    });
+
+    it('is off when disabled', async () => {
+      jest.setSystemTime(inTheNight);
+      setup({
+        quietHours: { ...DEFAULT_USER_SETTINGS.quietHours, enabled: false },
+      });
+      queueClaims([makeTask()]);
+      await usecase.execute();
+      expect(notificationGateway.sendReminder).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it('rolls an ignored recurring task onto its latest occurrence before sending', async () => {
-    const task = makeTask({
-      scheduledAt: new Date('2026-04-13T09:00:00Z'),
-      snoozedUntil: new Date('2026-04-13T10:00:00Z'),
-      recurrence: { type: 'daily' },
-      lastSentAt: new Date('2026-04-13T10:00:00Z'),
+  describe('nudges for ignored reminders (steps 30, 120)', () => {
+    it('after the reminder, schedules the first nudge 30 minutes later', async () => {
+      queueClaims([makeTask()]);
+      await usecase.execute();
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        nudgeAt: new Date('2026-04-16T12:30:00Z'),
+        nudgeCount: 0,
+      });
     });
-    taskRepository.findOverdueRecurring.mockResolvedValue([task]);
 
-    await usecase.execute();
+    it('sends nudge 1, then schedules nudge 2 at the step difference (90 min)', async () => {
+      const nudgeAt = new Date('2026-04-16T12:00:00Z');
+      queueClaims([
+        makeTask({
+          scheduledAt: new Date('2026-04-16T11:30:00Z'),
+          nudgeAt,
+          nextFireAt: nudgeAt,
+        }),
+      ]);
 
-    expect(taskRepository.update).toHaveBeenCalledWith({
-      id: 'task-1',
-      scheduledAt: new Date('2026-04-16T09:00:00Z'),
-      snoozedUntil: null,
+      await usecase.execute();
+
+      expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'nudge',
+          nudgeNumber: 1,
+          dueAt: new Date('2026-04-16T11:30:00Z'),
+        }),
+      );
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        nudgeCount: 1,
+        nudgeAt: new Date('2026-04-16T13:30:00Z'),
+      });
     });
-    expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
-      taskRepository.claimDueReminder.mock.invocationCallOrder[0]!,
-    );
+
+    it('after the last step, stops nudging', async () => {
+      const nudgeAt = new Date('2026-04-16T12:00:00Z');
+      queueClaims([makeTask({ nudgeAt, nextFireAt: nudgeAt, nudgeCount: 1 })]);
+      await usecase.execute();
+      expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'nudge', nudgeNumber: 2 }),
+      );
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        nudgeCount: 2,
+        nudgeAt: null,
+      });
+    });
+
+    it('never nudges low-priority tasks, or anyone who switched escalation off', async () => {
+      queueClaims([makeTask({ priority: 'low' })]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalled();
+
+      setup({ escalation: { enabled: false, stepsMinutes: [30, 120] } });
+      queueClaims([makeTask()]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('a pending nudge after escalation was switched off is dropped, not sent', async () => {
+      setup({ escalation: { enabled: false, stepsMinutes: [30, 120] } });
+      const nudgeAt = new Date('2026-04-16T12:00:00Z');
+      queueClaims([makeTask({ nudgeAt, nextFireAt: nudgeAt })]);
+      await usecase.execute();
+      expect(notificationGateway.sendReminder).not.toHaveBeenCalled();
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        nudgeAt: null,
+      });
+    });
   });
 
-  it('rolls over in the task timezone', async () => {
-    // Tashkent (UTC+5): 09:00 local = 04:00Z. Three days behind.
-    const task = makeTask({
-      scheduledAt: new Date('2026-04-13T04:00:00Z'),
-      timezone: 'Asia/Tashkent',
-      recurrence: { type: 'daily' },
-    });
-    taskRepository.findOverdueRecurring.mockResolvedValue([task]);
-
-    await usecase.execute();
-
-    expect(taskRepository.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scheduledAt: new Date('2026-04-16T04:00:00Z'),
-      }),
-    );
-  });
-
-  it('does not roll a recurring task whose next occurrence is still ahead', async () => {
-    taskRepository.findOverdueRecurring.mockResolvedValue([
-      makeTask({
-        scheduledAt: new Date('2026-04-16T09:00:00Z'),
+  describe('recurring rollover', () => {
+    it('rolls an ignored recurring task onto its latest occurrence before sending', async () => {
+      const task = makeTask({
+        scheduledAt: new Date('2026-04-13T09:00:00Z'),
+        snoozedUntil: new Date('2026-04-13T10:00:00Z'),
         recurrence: { type: 'daily' },
-      }),
-    ]);
+        lastSentAt: new Date('2026-04-13T10:00:00Z'),
+      });
+      taskRepository.findOverdueRecurring.mockResolvedValue([task]);
 
-    await usecase.execute();
+      await usecase.execute();
 
-    expect(taskRepository.update).not.toHaveBeenCalled();
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        scheduledAt: new Date('2026-04-16T09:00:00Z'),
+        snoozedUntil: null,
+      });
+      expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
+        taskRepository.claimDueReminder.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('rolls over in the task timezone', async () => {
+      taskRepository.findOverdueRecurring.mockResolvedValue([
+        makeTask({
+          scheduledAt: new Date('2026-04-13T04:00:00Z'), // 09:00 Tashkent
+          timezone: 'Asia/Tashkent',
+          recurrence: { type: 'daily' },
+        }),
+      ]);
+      await usecase.execute();
+      expect(taskRepository.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheduledAt: new Date('2026-04-16T04:00:00Z'),
+        }),
+      );
+    });
+
+    it('does not roll a recurring task whose next occurrence is still ahead', async () => {
+      taskRepository.findOverdueRecurring.mockResolvedValue([
+        makeTask({
+          scheduledAt: new Date('2026-04-16T09:00:00Z'),
+          recurrence: { type: 'daily' },
+        }),
+      ]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalled();
+    });
   });
 });

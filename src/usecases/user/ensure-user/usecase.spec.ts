@@ -29,6 +29,8 @@ describe('EnsureUserUsecase', () => {
       findByTelegramUserId: jest.fn(),
       findById: jest.fn(),
       update: jest.fn(),
+      listAll: jest.fn(),
+      claimDigest: jest.fn(),
     };
 
     usecase = new EnsureUserUsecase(userRepository);

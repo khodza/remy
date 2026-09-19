@@ -165,6 +165,13 @@ async function main(): Promise<void> {
       timezone,
       snoozed_until: snoozedUntil,
       next_fire_at: t.at ? (snoozedUntil ?? t.at) : null,
+      // Views filter on due_at; the boot-time backfill does not see rows
+      // inserted later, so write it here.
+      due_at: t.at ? (snoozedUntil ?? t.at) : null,
+      lead_sent_for: null,
+      nudge_at: null,
+      nudge_count: 0,
+      snooze_count: snoozedUntil ? 1 : 0,
       next_attempt_at: null,
       lead_minutes: null,
       status: t.done ? 'completed' : 'pending',

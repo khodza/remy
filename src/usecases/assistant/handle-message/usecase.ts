@@ -82,7 +82,7 @@ export class HandleMessageUsecase {
       this.tasks.find({
         userId: input.userId,
         statuses: [TaskStatus.Pending],
-        sort: 'fireAt',
+        sort: 'dueAt',
         limit: MAX_CANDIDATES,
       }),
       this.listCategories.execute({ userId: input.userId }),
@@ -365,7 +365,7 @@ export class HandleMessageUsecase {
     const base = {
       userId: input.userId,
       statuses: pending,
-      sort: 'fireAt' as const,
+      sort: 'dueAt' as const,
     };
 
     let tasks: Task[];
@@ -374,29 +374,29 @@ export class HandleMessageUsecase {
         tasks = await this.tasks.find({
           ...base,
           kind: 'reminder',
-          fireAtOrBefore: endOfToday,
+          dueAtOrBefore: endOfToday,
         });
         break;
       case 'tomorrow':
         tasks = await this.tasks.find({
           ...base,
           kind: 'reminder',
-          fireAfter: endOfToday,
-          fireAtOrBefore: addDays(endOfToday, 1),
+          dueAfter: endOfToday,
+          dueAtOrBefore: addDays(endOfToday, 1),
         });
         break;
       case 'week':
         tasks = await this.tasks.find({
           ...base,
           kind: 'reminder',
-          fireAtOrBefore: addDays(endOfToday, 7),
+          dueAtOrBefore: addDays(endOfToday, 7),
         });
         break;
       case 'overdue':
         tasks = await this.tasks.find({
           ...base,
           kind: 'reminder',
-          fireAtOrBefore: now,
+          dueAtOrBefore: now,
         });
         break;
       case 'inbox':

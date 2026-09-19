@@ -41,6 +41,7 @@ describe('DelayTaskUsecase', () => {
       id: 'task-1',
       scheduledAt: new Date('2026-04-16T14:30:00Z'),
       snoozedUntil: null,
+      incrementSnoozeCount: true,
     });
     expect(result.scheduledAt).toEqual(new Date('2026-04-16T14:30:00Z'));
   });
@@ -56,6 +57,7 @@ describe('DelayTaskUsecase', () => {
       id: 'task-1',
       scheduledAt: new Date('2026-04-16T12:15:00Z'),
       snoozedUntil: null,
+      incrementSnoozeCount: true,
     });
   });
 
@@ -73,6 +75,7 @@ describe('DelayTaskUsecase', () => {
     expect(taskRepository.update).toHaveBeenCalledWith({
       id: 'task-1',
       snoozedUntil: new Date('2026-04-16T13:00:00Z'),
+      incrementSnoozeCount: true,
     });
   });
 
@@ -90,6 +93,7 @@ describe('DelayTaskUsecase', () => {
     expect(taskRepository.update).toHaveBeenCalledWith({
       id: 'task-1',
       snoozedUntil: new Date('2026-04-16T14:15:00Z'),
+      incrementSnoozeCount: true,
     });
   });
 

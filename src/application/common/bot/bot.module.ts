@@ -10,6 +10,7 @@ import { UserModule } from '../user/user.module';
 import { NotificationModule } from '../notification/notification.module';
 import { AssistantModule } from '../assistant/assistant.module';
 import { ConversationModule } from '../conversation/conversation.module';
+import { RhythmModule } from '../rhythm/rhythm.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ConversationModule } from '../conversation/conversation.module';
     UserModule,
     AssistantModule,
     ConversationModule,
+    RhythmModule,
   ],
   providers: [
     AssistantResponder,

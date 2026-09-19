@@ -11,13 +11,27 @@ import type {
   TaskSnapshot,
   UndoRecord,
 } from '@domain/conversation';
+import type { ReviewOutcome, ReviewState } from '@domain/rhythm';
 import { Collections } from '../collections';
 
+type ReviewItemDoc = {
+  task_id: string;
+  title: string;
+  due_at: Date;
+  recurring: boolean;
+  outcome: string | null;
+  new_due_at: Date | null;
+};
 type BotMessageDoc = {
   chat_id: number;
   message_id: number;
   task_ids: string[];
   kind: string;
+  review?: {
+    timezone: string;
+    done_today: number;
+    items: ReviewItemDoc[];
+  } | null;
 };
 type ConversationDoc = {
   chat_id: number;
@@ -139,6 +153,75 @@ export class ConversationRepositoryImpl implements ConversationRepository {
     };
   }
 
+  public async saveReview(
+    chatId: number,
+    messageId: number,
+    review: ReviewState,
+  ): Promise<void> {
+    await this.messages.updateOne(
+      { chat_id: chatId, message_id: messageId },
+      {
+        $set: {
+          review: {
+            timezone: review.timezone,
+            done_today: review.doneToday,
+            items: review.items.map((i) => ({
+              task_id: i.taskId,
+              title: i.title,
+              due_at: i.dueAt,
+              recurring: i.recurring,
+              outcome: i.outcome,
+              new_due_at: i.newDueAt,
+            })),
+          },
+        },
+        $setOnInsert: {
+          task_ids: review.items.map((i) => i.taskId),
+          kind: 'review',
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  public async getReview(
+    chatId: number,
+    messageId: number,
+  ): Promise<ReviewState | null> {
+    const doc = await this.messages
+      .findOne({ chat_id: chatId, message_id: messageId })
+      .lean();
+    return doc?.review ? toReviewState(doc.review) : null;
+  }
+
+  public async resolveReviewItem(
+    chatId: number,
+    messageId: number,
+    taskId: string,
+    outcome: ReviewOutcome,
+    newDueAt: Date | null,
+  ): Promise<ReviewState | null> {
+    // $elemMatch on outcome: null makes this first-wins: a double tap (or
+    // two devices) can't resolve the same row twice.
+    const doc = await this.messages
+      .findOneAndUpdate(
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          'review.items': { $elemMatch: { task_id: taskId, outcome: null } },
+        },
+        {
+          $set: {
+            'review.items.$.outcome': outcome,
+            'review.items.$.new_due_at': newDueAt,
+          },
+        },
+        { new: true },
+      )
+      .lean();
+    return doc?.review ? toReviewState(doc.review) : null;
+  }
+
   private async patch(
     chatId: number,
     set: Partial<ConversationDoc>,
@@ -165,4 +248,21 @@ function reviveDates<T extends object>(
     }
   }
   return copy;
+}
+
+function toReviewState(
+  review: NonNullable<BotMessageDoc['review']>,
+): ReviewState {
+  return {
+    timezone: review.timezone,
+    doneToday: review.done_today,
+    items: review.items.map((i) => ({
+      taskId: i.task_id,
+      title: i.title,
+      dueAt: new Date(i.due_at),
+      recurring: i.recurring,
+      outcome: (i.outcome as ReviewOutcome | null) ?? null,
+      newDueAt: i.new_due_at ? new Date(i.new_due_at) : null,
+    })),
+  };
 }

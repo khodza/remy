@@ -93,3 +93,38 @@ describe('snoozePresets', () => {
     expect(presets.map((p) => p.key)).toEqual(['tomorrow']);
   });
 });
+
+describe('deriveNextFireAt with nudges', () => {
+  const nudgeAt = new Date('2026-09-18T12:30:00Z');
+  it('a pending nudge comes before the (already sent) due time and a snooze', () => {
+    expect(
+      deriveNextFireAt({
+        scheduledAt: due,
+        snoozedUntil: null,
+        leadMinutes: 30,
+        leadSentFor: due,
+        nudgeAt,
+      }),
+    ).toEqual(nudgeAt);
+    expect(
+      deriveNextFireAt({
+        scheduledAt: due,
+        snoozedUntil: new Date('2026-09-18T12:10:00Z'),
+        leadMinutes: null,
+        leadSentFor: null,
+        nudgeAt,
+      }),
+    ).toEqual(nudgeAt);
+  });
+  it('todos ignore nudges', () => {
+    expect(
+      deriveNextFireAt({
+        scheduledAt: null,
+        snoozedUntil: null,
+        leadMinutes: null,
+        leadSentFor: null,
+        nudgeAt,
+      }),
+    ).toBeNull();
+  });
+});

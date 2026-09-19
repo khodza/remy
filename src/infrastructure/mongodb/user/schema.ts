@@ -9,6 +9,9 @@ export const UserSchema = new Schema<UserDocument>(
     last_name: { type: String, default: null },
     username: { type: String, default: null },
     timezone: { type: String, default: null },
+    last_brief_on: { type: String, default: null },
+    last_review_on: { type: String, default: null },
+    last_wrap_on: { type: String, default: null },
     settings: { type: Schema.Types.Mixed, default: null },
     categories: {
       type: [

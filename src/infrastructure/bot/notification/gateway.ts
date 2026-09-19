@@ -8,7 +8,9 @@ import {
   SentReminder,
 } from '@domain/notification/gateway/types';
 import { NotificationFailedError } from '@domain/notification/errors';
+import type { Digest } from '@domain/rhythm';
 import { TelegramBotService } from '../bot.service';
+import { presentDigest } from '../presenters/rhythm.presenter';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
 import { formatForUser } from '@common/format-date';
@@ -49,6 +51,28 @@ export class NotificationGatewayImpl implements NotificationGateway {
       );
     }
   }
+
+  public async sendDigest(digest: Digest): Promise<SentReminder> {
+    const reply = presentDigest(digest);
+    try {
+      const message = await this.botService
+        .getBot()
+        .api.sendMessage(digest.chatId, reply.html, {
+          parse_mode: 'HTML',
+          ...(reply.keyboard ? { reply_markup: reply.keyboard } : {}),
+        });
+      return { messageId: message?.message_id ?? null };
+    } catch (error) {
+      const permanent =
+        error instanceof GrammyError &&
+        (error.error_code === 400 || error.error_code === 403);
+      throw new NotificationFailedError(
+        `Failed to send ${digest.kind}`,
+        error,
+        { permanent },
+      );
+    }
+  }
 }
 
 export function reminderText(input: SendReminderInput, now: Date): string {
@@ -56,6 +80,9 @@ export function reminderText(input: SendReminderInput, now: Date): string {
   if (input.kind === 'heads_up') {
     const minutes = Math.max(1, differenceInMinutes(input.dueAt, now));
     lines.push(`⏳ <b>In ${humanMinutes(minutes)}</b>`);
+  } else if (input.kind === 'nudge') {
+    const late = Math.max(1, differenceInMinutes(now, input.dueAt));
+    lines.push(`🔁 <b>Still open</b> · ${humanMinutes(late)} since it was due`);
   } else {
     lines.push('🔔 <b>Reminder</b>');
   }
@@ -74,7 +101,7 @@ export function reminderText(input: SendReminderInput, now: Date): string {
       : '';
     lines.push('', `<blockquote>${from}${escapeHtml(text)}</blockquote>`);
   }
-  if (input.kind === 'due') {
+  if (input.kind !== 'heads_up') {
     lines.push(
       '',
       '<i>Reply with a time (“in 2 hours”, “tomorrow 9”) to snooze.</i>',
@@ -99,7 +126,7 @@ export function reminderKeyboard(
     `complete:${input.taskId}`,
   );
 
-  if (input.kind === 'due') {
+  if (input.kind !== 'heads_up') {
     keyboard
       .text(`+15m → ${clock(addMinutes(now, 15))}`, `delay:${input.taskId}:15`)
       .text(`+1h → ${clock(addMinutes(now, 60))}`, `delay:${input.taskId}:60`)

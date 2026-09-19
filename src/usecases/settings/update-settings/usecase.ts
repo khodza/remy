@@ -28,6 +28,7 @@ export function mergeSettingsPatch(
         ...(patch.escalation?.stepsMinutes ?? current.escalation.stepsMinutes),
       ],
     },
+    weeklyWrap: { ...current.weeklyWrap, ...patch.weeklyWrap },
   };
 }
 

@@ -45,12 +45,14 @@ export class SnoozeTaskUsecase {
         return await this.taskRepository.update({
           id: input.taskId,
           snoozedUntil: input.until,
+          incrementSnoozeCount: true,
         });
       }
       return await this.taskRepository.update({
         id: input.taskId,
         scheduledAt: input.until,
         snoozedUntil: null,
+        incrementSnoozeCount: true,
       });
     } catch (error) {
       if (error instanceof ApplicationError) throw error;

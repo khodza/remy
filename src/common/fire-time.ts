@@ -7,12 +7,15 @@ export type FireInputs = {
   leadMinutes: number | null;
   /** The occurrence (scheduledAt) the heads-up was already sent for. */
   leadSentFor: Date | null;
+  /** Pending "still open" nudge, set only after the reminder was sent. */
+  nudgeAt?: Date | null;
 };
 
 /**
  * When the scheduler should next ping the user:
  * - todos never fire;
- * - a snooze wins over everything;
+ * - a pending nudge (the reminder was sent and ignored) comes next;
+ * - otherwise a snooze wins;
  * - with "remind me before", the heads-up fires first (scheduledAt - lead),
  *   and once it was sent for this occurrence the real reminder follows at
  *   scheduledAt.
@@ -20,6 +23,7 @@ export type FireInputs = {
 export function deriveNextFireAt(input: FireInputs): Date | null {
   const { scheduledAt, snoozedUntil, leadMinutes, leadSentFor } = input;
   if (scheduledAt === null) return null;
+  if (input.nudgeAt) return input.nudgeAt;
   if (snoozedUntil) return snoozedUntil;
   const headsUpPending =
     leadMinutes !== null &&

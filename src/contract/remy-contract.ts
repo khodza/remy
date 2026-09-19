@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '2.1.0';
+export const CONTRACT_VERSION = '2.2.0';
 
 // ---------------------------------------------------------------- enums ---
 
@@ -131,6 +131,8 @@ function buildResponses<D extends z.ZodType>(date: D) {
     completedAt: date.nullable(),
     /** How many occurrences of a recurring task were marked done. */
     completionsCount: z.number().int().nonnegative(),
+    /** How many times it was snoozed or delayed, ever. */
+    snoozeCount: z.number().int().nonnegative(),
     /** pending && nextFireAt < now. Always false for todos. */
     isOverdue: z.boolean(),
     createdAt: date,
@@ -225,11 +227,16 @@ export const Settings = z.object({
     to: TimeOfDay,
     allowHighPriority: z.boolean(),
   }),
-  /** Re-ping an ignored reminder after each of these delays (minutes). */
+  /**
+   * "Still open" nudges for an ignored reminder, this many minutes after it
+   * was sent (increasing). Low-priority tasks are never nudged.
+   */
   escalation: z.object({
     enabled: z.boolean(),
     stepsMinutes: z.array(z.number().int().positive()).max(5),
   }),
+  /** A summary of the week, sent at the evening-review time on the last day of the week. */
+  weeklyWrap: z.object({ enabled: z.boolean() }),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -246,6 +253,7 @@ export const DEFAULT_SETTINGS: Settings = {
     allowHighPriority: true,
   },
   escalation: { enabled: true, stepsMinutes: [30, 120] },
+  weeklyWrap: { enabled: true },
 };
 
 /** Any subset; nested objects may be partial too. */
@@ -258,6 +266,7 @@ export const UpdateSettingsRequest = z
     eveningReview: Settings.shape.eveningReview.partial().strict(),
     quietHours: Settings.shape.quietHours.partial().strict(),
     escalation: Settings.shape.escalation.partial().strict(),
+    weeklyWrap: Settings.shape.weeklyWrap.partial().strict(),
   })
   .partial()
   .strict();

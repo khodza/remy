@@ -25,6 +25,7 @@ describe('SnoozeTaskUsecase', () => {
       id: 'task-1',
       scheduledAt: tonight,
       snoozedUntil: null,
+      incrementSnoozeCount: true,
     });
   });
 
@@ -36,6 +37,7 @@ describe('SnoozeTaskUsecase', () => {
     expect(repo.update).toHaveBeenCalledWith({
       id: 'task-1',
       snoozedUntil: tonight,
+      incrementSnoozeCount: true,
     });
   });
 

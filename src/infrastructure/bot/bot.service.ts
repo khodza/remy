@@ -96,6 +96,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // Commands
     this.bot.command('start', (ctx) => this.commandHandler.handleStart(ctx));
+    this.bot.command('today', (ctx) => this.commandHandler.handleToday(ctx));
     this.bot.command('list', (ctx) => this.commandHandler.handleList(ctx));
     this.bot.command('delete', (ctx) => this.commandHandler.handleDelete(ctx));
     this.bot.command('settings', (ctx) =>

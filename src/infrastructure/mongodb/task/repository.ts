@@ -100,6 +100,19 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         { updatePipeline: true, timestamps: false },
       ),
     );
+    // Views filter on due_at (Phase 4). `$exists: false` only: a todo
+    // legitimately has due_at null.
+    await step('due_at', () =>
+      this.model.updateMany(
+        { due_at: { $exists: false } },
+        [
+          {
+            $set: { due_at: { $ifNull: ['$snoozed_until', '$scheduled_at'] } },
+          },
+        ],
+        { updatePipeline: true, timestamps: false },
+      ),
+    );
   }
 
   public async create(params: CreateTaskParams): Promise<Task> {
@@ -121,6 +134,10 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         next_attempt_at: null,
         lead_minutes: params.leadMinutes ?? null,
         lead_sent_for: null,
+        due_at: params.scheduledAt,
+        nudge_at: null,
+        nudge_count: 0,
+        snooze_count: 0,
         status: TaskStatus.Pending,
         priority: params.priority ?? 'normal',
         category_id: params.categoryId ?? null,
@@ -161,10 +178,13 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     if (filter.kind === 'todo') query['scheduled_at'] = null;
     if (filter.kind === 'reminder') query['scheduled_at'] = { $ne: null };
 
-    const fire: Record<string, Date> = {};
-    if (filter.fireAtOrBefore) fire['$lte'] = filter.fireAtOrBefore;
-    if (filter.fireAfter) fire['$gt'] = filter.fireAfter;
-    if (Object.keys(fire).length > 0) query['next_fire_at'] = fire;
+    const due: Record<string, Date> = {};
+    if (filter.dueAtOrBefore) due['$lte'] = filter.dueAtOrBefore;
+    if (filter.dueAfter) due['$gt'] = filter.dueAfter;
+    if (Object.keys(due).length > 0) query['due_at'] = due;
+    if (filter.updatedAtOrAfter) {
+      query['updated_at'] = { $gte: filter.updatedAtOrAfter };
+    }
 
     if (filter.completedAtOrAfter) {
       query['completed_at'] = { $gte: filter.completedAtOrAfter };
@@ -175,7 +195,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         ? { completed_at: -1 }
         : filter.sort === 'createdAtDesc'
           ? { created_at: -1 }
-          : { next_fire_at: 1, created_at: 1 };
+          : { due_at: 1, created_at: 1 };
 
     let cursor = this.model.find(query).sort(sort);
     if (filter.limit !== undefined) cursor = cursor.limit(filter.limit);
@@ -259,6 +279,11 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         set['next_attempt_at'] = params.nextAttemptAt;
       if (params.leadMinutes !== undefined)
         set['lead_minutes'] = params.leadMinutes;
+      if (params.leadSentFor !== undefined)
+        set['lead_sent_for'] = params.leadSentFor;
+      if (params.nudgeAt !== undefined) set['nudge_at'] = params.nudgeAt;
+      if (params.nudgeCount !== undefined)
+        set['nudge_count'] = params.nudgeCount;
       if (params.status !== undefined) set['status'] = params.status;
       if (params.priority !== undefined) set['priority'] = params.priority;
       if (params.categoryId !== undefined)
@@ -270,12 +295,20 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       if (params.recurrence !== undefined)
         set['recurrence'] = recurrenceToSubdoc(params.recurrence);
 
-      // next_fire_at is derived; recompute whenever one of its inputs changes.
+      // A new time or a snooze starts a fresh occurrence: no nudges yet.
+      const timeChanged =
+        params.scheduledAt !== undefined || params.snoozedUntil !== undefined;
+      if (timeChanged && params.nudgeAt === undefined) {
+        set['nudge_at'] = null;
+        set['nudge_count'] = 0;
+      }
+
+      // next_fire_at and due_at are derived; recompute whenever an input changes.
       if (
-        params.scheduledAt !== undefined ||
-        params.snoozedUntil !== undefined ||
+        timeChanged ||
         params.leadMinutes !== undefined ||
-        params.leadSentFor !== undefined
+        params.leadSentFor !== undefined ||
+        params.nudgeAt !== undefined
       ) {
         const existing = await this.model.findById(params.id);
         if (!existing) {
@@ -291,10 +324,27 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
           ),
           leadMinutes: pick(params.leadMinutes, existing.lead_minutes ?? null),
           leadSentFor: pick(params.leadSentFor, existing.lead_sent_for ?? null),
+          nudgeAt:
+            params.nudgeAt !== undefined
+              ? params.nudgeAt
+              : timeChanged
+                ? null
+                : (existing.nudge_at ?? null),
         });
+        const scheduledAt = pick(
+          params.scheduledAt,
+          existing.scheduled_at ?? null,
+        );
+        const snoozedUntil = pick(
+          params.snoozedUntil,
+          existing.snoozed_until ?? null,
+        );
+        set['due_at'] =
+          scheduledAt === null ? null : (snoozedUntil ?? scheduledAt);
       }
 
       const update: Record<string, unknown> = { $set: set };
+      if (params.incrementSnoozeCount) update['$inc'] = { snooze_count: 1 };
       if (params.truncateCompletions !== undefined) {
         update['$push'] = {
           completions: { $each: [], $slice: params.truncateCompletions },
@@ -349,6 +399,9 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       nextAttemptAt: document.next_attempt_at ?? null,
       leadMinutes: document.lead_minutes ?? null,
       leadSentFor: document.lead_sent_for ?? null,
+      nudgeAt: document.nudge_at ?? null,
+      nudgeCount: document.nudge_count ?? 0,
+      snoozeCount: document.snooze_count ?? 0,
       status: document.status as TaskStatus,
       priority: (document.priority as Priority | undefined) ?? 'normal',
       categoryId: document.category_id ?? null,

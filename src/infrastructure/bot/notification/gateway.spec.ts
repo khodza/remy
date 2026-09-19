@@ -75,6 +75,18 @@ describe('NotificationGatewayImpl', () => {
     ]);
   });
 
+  it('a nudge says how long it has been open and offers the full keyboard', async () => {
+    jest.useFakeTimers({ now: new Date('2026-04-16T12:47:00Z') });
+    await gateway.sendReminder({ ...input, kind: 'nudge', nudgeNumber: 1 });
+    jest.useRealTimers();
+    expect(sendMessage.mock.calls[0][1]).toContain(
+      'Still open</b> · 47 min since it was due',
+    );
+    expect(
+      sendMessage.mock.calls[0][2].reply_markup.inline_keyboard.flat().length,
+    ).toBeGreaterThan(1);
+  });
+
   it('a heads-up says how long is left and only offers Done', async () => {
     jest.useFakeTimers({ now: new Date('2026-04-16T11:30:00Z') });
     await gateway.sendReminder({ ...input, kind: 'heads_up' });

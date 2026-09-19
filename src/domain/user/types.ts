@@ -15,6 +15,8 @@ export type UserSettings = {
   };
   /** Re-ping an ignored reminder after each of these delays (minutes). */
   escalation: { enabled: boolean; stepsMinutes: number[] };
+  /** Weekly summary at the evening-review time on the last day of the week. */
+  weeklyWrap: { enabled: boolean };
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -30,6 +32,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     allowHighPriority: true,
   },
   escalation: { enabled: true, stepsMinutes: [30, 120] },
+  weeklyWrap: { enabled: true },
 };
 
 /** Deep-partial of UserSettings, one level of nesting. */

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { ListTasksUsecase } from '@usecases/task/list-tasks';
@@ -6,13 +6,26 @@ import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
 import { formatForUserShort } from '@common/format-date';
 import type { Recurrence, Task } from '@domain/task';
-import { toEnsureUserInput } from '../user-input';
+import { resolveTimezone, toEnsureUserInput } from '../user-input';
+import type { ConversationRepository } from '@domain/conversation';
+import { Domain } from '@common/tokens';
+import { getEnv } from '@common/config';
+import { DigestBuilder, briefTaskIds } from '@usecases/rhythm';
+import { presentBrief } from '../presenters/rhythm.presenter';
+
+function humanDelay(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  return minutes % 60 === 0
+    ? `${minutes / 60} h`
+    : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
 
 /** Commands shown in Telegram's "/" menu. Keep in sync with /help. */
 export const BOT_COMMANDS = [
+  { command: 'today', description: "Today's plan, overdue and inbox" },
   { command: 'list', description: 'Show your pending reminders' },
   { command: 'delete', description: 'Delete a reminder' },
-  { command: 'settings', description: 'Set your timezone' },
+  { command: 'settings', description: 'Timezone, brief times, quiet hours' },
   { command: 'help', description: 'How to use Remy' },
 ] as const;
 
@@ -37,7 +50,44 @@ export class CommandHandler {
   constructor(
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly listTasksUsecase: ListTasksUsecase,
+    private readonly digestBuilder: DigestBuilder,
+    @Inject(Domain.Conversation.Repository)
+    private readonly conversations: ConversationRepository,
   ) {}
+
+  /** The morning brief, on demand. Replies to it act on its numbered tasks. */
+  public async handleToday(ctx: Context): Promise<void> {
+    if (ctx.from === undefined) return;
+    try {
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
+      const brief = await this.digestBuilder.buildBrief(
+        user,
+        resolveTimezone(user),
+        new Date(),
+        false,
+      );
+      const reply = presentBrief(brief);
+      const sent = await ctx.reply(reply.html, {
+        parse_mode: 'HTML',
+        ...(reply.keyboard ? { reply_markup: reply.keyboard } : {}),
+      });
+      await this.conversations
+        .linkMessage({
+          chatId: ctx.chat?.id ?? ctx.from.id,
+          messageId: sent.message_id,
+          taskIds: briefTaskIds(brief),
+          kind: 'agenda',
+        })
+        .catch((error: unknown) =>
+          console.error('Failed to link /today:', error),
+        );
+    } catch (error) {
+      console.error('Failed to handle today command:', error);
+      await ctx.reply('❌ Failed to load your day. Please try again.');
+    }
+  }
 
   public async handleStart(ctx: Context): Promise<void> {
     if (ctx.from === undefined) return;
@@ -59,10 +109,12 @@ export class CommandHandler {
           `• "Take vitamins every day at 9"\n` +
           `• "What's on today?" · "Done with the dentist" · "Move it to 18:00"\n` +
           `• Forward me a message and tell me when\n\n` +
+          `Every morning I send your plan for the day and every evening a short review; /settings to change the times.\n\n` +
           `<b>Commands</b>\n` +
+          `/today – your day at a glance\n` +
           `/list – view your reminders\n` +
           `/delete – delete a reminder\n` +
-          `/settings – set your timezone\n` +
+          `/settings – timezone, brief times, quiet hours\n` +
           `/help – show help\n\n` +
           timezoneNote,
         { parse_mode: 'HTML' },
@@ -151,13 +203,16 @@ export class CommandHandler {
       }
 
       // Create inline keyboard with delete buttons
+      // One button per row, at most 10; no trailing empty row.
       const keyboard = new InlineKeyboard();
-      for (const task of result.tasks.slice(0, 10)) {
-        // Limit to 10 tasks
-        keyboard
-          .text(`${task.description.slice(0, 30)}...`, `delete:${task.id}`)
-          .row();
-      }
+      result.tasks.slice(0, 10).forEach((task, i) => {
+        if (i > 0) keyboard.row();
+        const label =
+          task.description.length > 30
+            ? `${task.description.slice(0, 29)}…`
+            : task.description;
+        keyboard.text(label, `delete:${task.id}`);
+      });
 
       await ctx.reply('Select a task to delete:', { reply_markup: keyboard });
     } catch (error) {
@@ -176,6 +231,23 @@ export class CommandHandler {
       );
 
       const currentTimezone = user.timezone ?? 'Not set (using UTC)';
+      const s = user.settings;
+      const weekEnd = s.weekStartsOn === 1 ? 'Sunday' : 'Saturday';
+      const rhythm = [
+        `☀️ Morning brief: ${s.morningBrief.enabled ? s.morningBrief.time : 'off'}`,
+        `🌙 Evening review: ${s.eveningReview.enabled ? s.eveningReview.time : 'off'}` +
+          (s.weeklyWrap.enabled ? ` · 📊 weekly wrap on ${weekEnd}` : ''),
+        `🔕 Quiet hours: ${
+          s.quietHours.enabled
+            ? `${s.quietHours.from}–${s.quietHours.to}${s.quietHours.allowHighPriority ? ' (high priority still rings)' : ''}`
+            : 'off'
+        }`,
+        `🔁 If you ignore a reminder: ${
+          s.escalation.enabled && s.escalation.stepsMinutes.length > 0
+            ? `nudge after ${s.escalation.stepsMinutes.map(humanDelay).join(' and ')}`
+            : 'no nudges'
+        }`,
+      ].join('\n');
 
       // Create inline keyboard with common timezones
       const keyboard = new InlineKeyboard()
@@ -191,8 +263,18 @@ export class CommandHandler {
         .text('🇺🇿 Asia/Tashkent', 'tz:Asia/Tashkent')
         .text('🇦🇺 Australia/Sydney', 'tz:Australia/Sydney');
 
+      const appUrl = getEnv().MINI_APP_URL;
+      if (appUrl) {
+        const url = new URL(appUrl);
+        url.searchParams.set('screen', 'settings');
+        keyboard.row().webApp('⚙️ Change these in the app', url.toString());
+      }
+
       await ctx.reply(
-        `⚙️ <b>Settings</b>\n\n🕐 Current timezone: ${escapeHtml(currentTimezone)}\n\nPick one below, or open the Mini App: it detects your timezone automatically and lets you search any zone.`,
+        `⚙️ <b>Settings</b>\n\n🕐 Timezone: ${escapeHtml(currentTimezone)}\n${rhythm}\n\n` +
+          (appUrl
+            ? 'Change them in the app, or pick a timezone below.'
+            : 'Pick a timezone below. Brief times, quiet hours and nudges are changed in the Mini App (Settings).'),
         { reply_markup: keyboard, parse_mode: 'HTML' },
       );
     } catch (error) {
@@ -222,10 +304,16 @@ export class CommandHandler {
         `• Reply to any of my messages: "make it 11", "in 2 hours", "done"\n\n` +
         `<b>When it's time</b>\n` +
         `Buttons show the resulting time: ✅ Done, +15m, +1h, Tonight, Tomorrow. ` +
-        `Every change has an ↩ Undo for 10 minutes.\n\n` +
+        `Every change has an ↩ Undo for 10 minutes. ` +
+        `If you ignore a reminder I nudge you again (after 30 min and 2 h by default), never during your quiet hours.\n\n` +
+        `<b>Every day</b>\n` +
+        `☀️ Morning brief: today's plan, overdue things, your Inbox.\n` +
+        `🌙 Evening review: what is still open, with one-tap Done / Tomorrow / No date.\n` +
+        `📊 On the last evening of the week: a short wrap-up.\n\n` +
         `<b>Commands</b>\n` +
-        `/list – pending reminders · /delete – delete one\n` +
-        `/settings – timezone · /help – this message`,
+        `/today – your day at a glance · /list – pending reminders\n` +
+        `/delete – delete one · /settings – times, quiet hours, nudges\n` +
+        `/help – this message`,
       { parse_mode: 'HTML' },
     );
   }

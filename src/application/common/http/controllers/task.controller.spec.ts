@@ -59,6 +59,8 @@ describe('TaskController', () => {
       findByTelegramUserId: jest.fn(),
       findById: jest.fn().mockResolvedValue(owner),
       update: jest.fn(),
+      listAll: jest.fn(),
+      claimDigest: jest.fn(),
     };
     listTasks = { execute: jest.fn() };
     processText = { execute: jest.fn() };

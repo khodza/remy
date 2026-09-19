@@ -6,9 +6,11 @@ export type SendReminderInput = {
   description: string;
   /**
    * 'due' = the reminder itself; 'heads_up' = the "remind me before" ping
-   * that precedes it.
+   * that precedes it; 'nudge' = "still open", the reminder was ignored.
    */
-  kind: 'due' | 'heads_up';
+  kind: 'due' | 'heads_up' | 'nudge';
+  /** For nudges: 1 for the first "still open", 2 for the second… */
+  nudgeNumber?: number;
   /** When the task is due (snoozes included). */
   dueAt: Date;
   /** IANA zone used to format times. */

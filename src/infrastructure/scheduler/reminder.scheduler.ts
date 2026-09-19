@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SendPendingRemindersUsecase } from '@usecases/task/send-pending-reminders';
+import { SendDailyDigestsUsecase } from '@usecases/rhythm';
 
 @Injectable()
 export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
@@ -12,6 +13,7 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
 
   constructor(
     private readonly sendPendingRemindersUsecase: SendPendingRemindersUsecase,
+    private readonly sendDailyDigestsUsecase: SendDailyDigestsUsecase,
   ) {}
 
   onModuleInit() {
@@ -41,13 +43,28 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
   private async runOnce(): Promise<void> {
     try {
       const result = await this.sendPendingRemindersUsecase.execute();
-      if (result.sentCount > 0 || result.failedCount > 0) {
+      if (
+        result.sentCount > 0 ||
+        result.failedCount > 0 ||
+        result.heldCount > 0
+      ) {
         console.log(
-          `📊 [CRON] Reminders sent: ${result.sentCount}, failed: ${result.failedCount}`,
+          `📊 [CRON] Reminders sent: ${result.sentCount}, failed: ${result.failedCount}, held for quiet hours: ${result.heldCount}`,
         );
       }
     } catch (error) {
       console.error('❌ [CRON] Error in reminder scheduler:', error);
+    }
+    // Separate try: a failing digest must not stop reminders, and vice versa.
+    try {
+      const digests = await this.sendDailyDigestsUsecase.execute();
+      if (digests.sent > 0 || digests.failed > 0) {
+        console.log(
+          `📰 [CRON] Digests sent: ${digests.sent}, failed: ${digests.failed}`,
+        );
+      }
+    } catch (error) {
+      console.error('❌ [CRON] Error in digest scheduler:', error);
     }
   }
 }

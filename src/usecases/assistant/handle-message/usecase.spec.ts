@@ -410,10 +410,10 @@ describe('HandleMessageUsecase', () => {
     expect(tasks.find).toHaveBeenLastCalledWith({
       userId: 'user-1',
       statuses: [TaskStatus.Pending],
-      sort: 'fireAt',
+      sort: 'dueAt',
       kind: 'reminder',
-      fireAfter: new Date('2026-09-18T18:59:59.999Z'),
-      fireAtOrBefore: new Date('2026-09-19T18:59:59.999Z'),
+      dueAfter: new Date('2026-09-18T18:59:59.999Z'),
+      dueAtOrBefore: new Date('2026-09-19T18:59:59.999Z'),
     });
     expect(result).toMatchObject({
       kind: 'agenda',

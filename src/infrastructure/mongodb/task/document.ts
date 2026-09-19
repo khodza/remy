@@ -38,6 +38,11 @@ export type TaskDocument = {
   next_attempt_at?: Date | null;
   lead_minutes?: number | null;
   lead_sent_for?: Date | null;
+  /** snoozed_until ?? scheduled_at, stored for the view queries. */
+  due_at?: Date | null;
+  nudge_at?: Date | null;
+  nudge_count?: number;
+  snooze_count?: number;
   status: string;
   priority?: string;
   category_id?: string | null;

@@ -48,6 +48,7 @@ export class DelayTaskUsecase {
         return await this.taskRepository.update({
           id: input.taskId,
           snoozedUntil: until,
+          incrementSnoozeCount: true,
         });
       }
 
@@ -55,6 +56,7 @@ export class DelayTaskUsecase {
         id: input.taskId,
         scheduledAt: until,
         snoozedUntil: null,
+        incrementSnoozeCount: true,
       });
     } catch (error) {
       if (error instanceof ApplicationError) throw error;

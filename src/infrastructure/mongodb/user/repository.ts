@@ -11,6 +11,16 @@ import { UserDocument, UserHydratedDocument } from './document';
 import { Collections } from '../collections';
 import { UserNotFoundError, FailedToSaveUserError } from '@domain/user/errors';
 import { DEFAULT_USER_SETTINGS, type UserSettings } from '@domain/user';
+import type { DigestKind } from '@domain/rhythm';
+
+const DIGEST_FIELD: Record<
+  DigestKind,
+  'last_brief_on' | 'last_review_on' | 'last_wrap_on'
+> = {
+  brief: 'last_brief_on',
+  review: 'last_review_on',
+  wrap: 'last_wrap_on',
+};
 import { ApplicationError } from '@domain/error';
 
 @Injectable()
@@ -87,6 +97,25 @@ export class UserRepositoryImpl implements UserRepository {
     }
   }
 
+  public async listAll(): Promise<User[]> {
+    const docs = await this.model.find({});
+    return docs.map((doc) => this.documentToEntity(doc));
+  }
+
+  public async claimDigest(
+    userId: string,
+    kind: DigestKind,
+    localDate: string,
+  ): Promise<boolean> {
+    const field = DIGEST_FIELD[kind];
+    const result = await this.model.updateOne(
+      { _id: userId, [field]: { $ne: localDate } },
+      { $set: { [field]: localDate } },
+      { timestamps: false },
+    );
+    return result.modifiedCount === 1;
+  }
+
   private documentToEntity(document: UserDocument): User {
     return {
       id: document._id.toHexString(),
@@ -130,5 +159,6 @@ function mergeSettings(
         ...(s.escalation?.stepsMinutes ?? d.escalation.stepsMinutes),
       ],
     },
+    weeklyWrap: { ...d.weeklyWrap, ...s.weeklyWrap },
   };
 }

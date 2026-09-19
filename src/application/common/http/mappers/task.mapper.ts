@@ -30,6 +30,7 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
     },
     completedAt: task.completedAt ? task.completedAt.toISOString() : null,
     completionsCount: task.completions.length,
+    snoozeCount: task.snoozeCount,
     isOverdue:
       task.status === 'pending' &&
       dueAt !== null &&

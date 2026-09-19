@@ -237,8 +237,8 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
           userId: 'user-1',
           statuses: pending,
           kind: 'reminder',
-          fireAtOrBefore: now,
-          sort: 'fireAt',
+          dueAtOrBefore: now,
+          sort: 'dueAt',
         }),
       ).toEqual(['due']);
       expect(
@@ -246,8 +246,8 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
           userId: 'user-1',
           statuses: pending,
           kind: 'reminder',
-          fireAfter: now,
-          sort: 'fireAt',
+          dueAfter: now,
+          sort: 'dueAt',
         }),
       ).toEqual(['later']);
       expect(

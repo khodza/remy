@@ -16,7 +16,14 @@ import { describeRecurrence } from '@common/recurrence';
 import { formatForUser } from '@common/format-date';
 import { type SnoozePresetKey, snoozePresetTime } from '@common/fire-time';
 import { ignoreNotModified } from '../telegram-safe';
-import { toEnsureUserInput } from '../user-input';
+import { resolveTimezone, toEnsureUserInput } from '../user-input';
+import {
+  MoveOverdueToTodayUsecase,
+  ResolveReviewItemUsecase,
+  type ReviewAction,
+} from '@usecases/rhythm';
+import { briefKeyboard, presentReview } from '../presenters/rhythm.presenter';
+import { presentAssistantResult } from '../presenters/assistant.presenter';
 import { AssistantResponder } from '../assistant.responder';
 
 /** Short text shown as the toast after a button tap. */
@@ -41,6 +48,8 @@ export class CallbackHandler {
     private readonly undoAction: UndoActionUsecase,
     private readonly undoRecorder: UndoRecorder,
     private readonly responder: AssistantResponder,
+    private readonly resolveReview: ResolveReviewItemUsecase,
+    private readonly moveOverdue: MoveOverdueToTodayUsecase,
     @Inject(Domain.Task.Repository)
     private readonly taskRepository: TaskRepository,
     @Inject(Domain.Conversation.Repository)
@@ -72,6 +81,8 @@ export class CallbackHandler {
     if (data.startsWith('ans:')) return this.handleAnswer(ctx, data);
     if (data.startsWith('fwd:')) return this.handleForwardWhen(ctx, data);
     if (data.startsWith('tz:')) return this.handleTimezone(ctx, data);
+    if (data.startsWith('rv:')) return this.handleReview(ctx, data);
+    if (data === 'brief:overdue') return this.handleBriefOverdue(ctx);
     return '🤔 Unknown action';
   }
 
@@ -238,6 +249,102 @@ export class CallbackHandler {
       `✅ <b>Timezone updated!</b>\n\n🕐 New timezone: ${escapeHtml(timezone)}`,
     );
     return '✅ Timezone updated!';
+  }
+
+  /** A row button (or "all") on the evening review: act, then redraw the message. */
+  private async handleReview(ctx: Context, data: string): Promise<Toast> {
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (!ctx.from || messageId === undefined) return '❌ Action failed';
+    const chatId = ctx.chat?.id ?? ctx.from.id;
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
+    );
+    const [, code = '', taskId = ''] = data.split(':');
+
+    const actions: Record<string, ReviewAction> = {
+      done: 'done',
+      tmr: 'tomorrow',
+      inbox: 'inbox',
+      skip: 'skip',
+    };
+    const result =
+      code === 'all'
+        ? await this.resolveReview.executeAll({
+            chatId,
+            messageId,
+            userId: user.id,
+          })
+        : actions[code]
+          ? await this.resolveReview.execute({
+              chatId,
+              messageId,
+              userId: user.id,
+              taskId,
+              action: actions[code],
+            })
+          : undefined;
+    if (result === undefined) return '🤔 Unknown action';
+    if (result === null) return '⌛ That review is no longer available';
+
+    const reply = presentReview(result.review);
+    await this.edit(ctx, reply.html, reply.keyboard);
+    if (!result.changed) return '👌 Already sorted';
+    const toasts: Record<string, string> = {
+      done: '✅ Done',
+      tmr: '⏭ Moved to tomorrow 09:00',
+      inbox: '📥 Moved to your Inbox',
+      skip: '⏩ Skipped this time',
+      all: '⏭ All moved to tomorrow 09:00',
+    };
+    return toasts[code] ?? '👌';
+  }
+
+  /** The brief's "Move overdue to today". */
+  private async handleBriefOverdue(ctx: Context): Promise<Toast> {
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (!ctx.from || messageId === undefined) return '❌ Action failed';
+    const chatId = ctx.chat?.id ?? ctx.from.id;
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
+    );
+    const timezone = resolveTimezone(user);
+
+    const result = await this.moveOverdue.execute({
+      userId: user.id,
+      chatId,
+      timezone,
+      taskIds: await this.conversations.findLinkedTaskIds(chatId, messageId),
+    });
+    const keyboard = briefKeyboard(false);
+    await ignoreNotModified(
+      ctx.editMessageReplyMarkup(keyboard ? { reply_markup: keyboard } : {}),
+    );
+    if (result.tasks.length === 0) return '✅ Nothing is overdue any more';
+
+    const reply = presentAssistantResult(
+      {
+        kind: 'rescheduled',
+        tasks: result.tasks,
+        skipped: [],
+        undoId: result.undoId,
+      },
+      timezone,
+    );
+    const sent = await ctx.reply(reply.html, {
+      parse_mode: 'HTML',
+      ...(reply.keyboard ? { reply_markup: reply.keyboard } : {}),
+    });
+    await this.conversations
+      .linkMessage({
+        chatId,
+        messageId: sent.message_id,
+        taskIds: result.tasks.map((t) => t.id),
+        kind: 'confirmation',
+      })
+      .catch((error: unknown) =>
+        console.error('Failed to link moved tasks:', error),
+      );
+    return `⏭ Moved ${result.tasks.length} to today`;
   }
 
   private async showSnoozed(

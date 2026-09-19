@@ -62,6 +62,10 @@ export const TaskSchema = new Schema<TaskDocument>(
     next_attempt_at: { type: Date, required: false, default: null },
     lead_minutes: { type: Number, default: null, min: 1 },
     lead_sent_for: { type: Date, default: null },
+    due_at: { type: Date, default: null },
+    nudge_at: { type: Date, default: null },
+    nudge_count: { type: Number, default: 0 },
+    snooze_count: { type: Number, default: 0 },
     status: {
       type: String,
       required: true,
@@ -91,6 +95,7 @@ export const TaskSchema = new Schema<TaskDocument>(
 TaskSchema.index({ status: 1, next_fire_at: 1 });
 // Still used by findOverdueRecurring.
 TaskSchema.index({ status: 1, scheduled_at: 1 });
-// Mini App views: today/upcoming/inbox and the Done list.
-TaskSchema.index({ user_id: 1, status: 1, next_fire_at: 1 });
+// Mini App views and chat queries filter on the due time, not on the
+// scheduler's internal fire time (a heads-up or a nudge).
+TaskSchema.index({ user_id: 1, status: 1, due_at: 1 });
 TaskSchema.index({ user_id: 1, status: 1, completed_at: -1 });

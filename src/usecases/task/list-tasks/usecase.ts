@@ -44,8 +44,8 @@ export class ListTasksUsecase {
             userId,
             statuses: [TaskStatus.Pending],
             kind: 'reminder',
-            fireAtOrBefore: endOfToday,
-            sort: 'fireAt',
+            dueAtOrBefore: endOfToday,
+            sort: 'dueAt',
           }),
           this.taskRepository.find({
             userId,
@@ -61,8 +61,8 @@ export class ListTasksUsecase {
           userId,
           statuses: [TaskStatus.Pending],
           kind: 'reminder',
-          fireAfter: endOfToday,
-          sort: 'fireAt',
+          dueAfter: endOfToday,
+          sort: 'dueAt',
         });
       case 'inbox':
         return this.taskRepository.find({
@@ -84,7 +84,7 @@ export class ListTasksUsecase {
           statuses: input.includeCompleted
             ? [TaskStatus.Pending, TaskStatus.Overdue, TaskStatus.Completed]
             : [TaskStatus.Pending, TaskStatus.Overdue],
-          sort: 'fireAt',
+          sort: 'dueAt',
         });
     }
   }

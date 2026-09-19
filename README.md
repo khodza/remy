@@ -61,7 +61,11 @@ A pre-commit hook runs eslint + prettier on staged `.ts` files.
    latest occurrence, then atomically claim and send every pending task whose
    `nextFireAt` has come (a crash between claim and send can never duplicate
    a reminder; transient Telegram errors are retried after 2 minutes).
-   Buttons: ✅ Done, +15 min, +1 hour. Times are shown in the task's timezone.
+   Buttons: ✅ Done, +15m → HH:mm, +1h → HH:mm, Tonight, Tomorrow. Times are
+   shown in the task's timezone. A "remind me before" heads-up fires first;
+   an ignored reminder is nudged again at each escalation step (30 min and
+   2 h by default, never for low priority); during quiet hours pings are held
+   until the window ends (high priority can ring through).
 3. **Act.** Callback queries (`CallbackHandler`) complete, delay or delete a
    task, always checking the task belongs to the tapping user. Done on a
    recurring task moves it to the next occurrence.
@@ -83,6 +87,23 @@ src/
 
 Path aliases: `@domain/*`, `@usecases/*`, `@infra/*`, `@application/*`,
 `@common/*`.
+
+## Daily rhythm
+
+The same minute cron also sends, per user and once per local day (claimed
+atomically, with a 3-hour catch-up window after downtime):
+
+- **Morning brief** (default 08:00): today's reminders, overdue ones, the
+  Inbox; numbered so a reply like "done with 2" works; a button moves every
+  overdue task to today, keeping its time of day. `/today` shows it on demand.
+- **Evening review** (default 21:00): what is still open, each with one-tap
+  Done / Tomorrow 09:00 / No date (Skip for repeating tasks); the message
+  redraws itself row by row.
+- **Weekly wrap** on the last day of the week: things done, streak, what is
+  still overdue, what keeps getting snoozed, next week's load.
+
+All times and switches live in the user's settings (`GET/PATCH /settings`,
+Mini App → Settings → Daily rhythm).
 
 ## API contract
 

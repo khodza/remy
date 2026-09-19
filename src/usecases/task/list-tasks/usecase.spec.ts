@@ -52,7 +52,7 @@ describe('ListTasksUsecase', () => {
     expect(taskRepository.find).toHaveBeenLastCalledWith({
       userId: 'user-1',
       statuses: [TaskStatus.Pending, TaskStatus.Overdue],
-      sort: 'fireAt',
+      sort: 'dueAt',
     });
 
     await usecase.execute({
@@ -63,7 +63,7 @@ describe('ListTasksUsecase', () => {
     expect(taskRepository.find).toHaveBeenLastCalledWith({
       userId: 'user-1',
       statuses: [TaskStatus.Pending, TaskStatus.Overdue, TaskStatus.Completed],
-      sort: 'fireAt',
+      sort: 'dueAt',
     });
   });
 
@@ -84,8 +84,8 @@ describe('ListTasksUsecase', () => {
       userId: 'user-1',
       statuses: [TaskStatus.Pending],
       kind: 'reminder',
-      fireAtOrBefore: new Date('2026-04-16T18:59:59.999Z'), // 23:59:59.999 Tashkent
-      sort: 'fireAt',
+      dueAtOrBefore: new Date('2026-04-16T18:59:59.999Z'), // 23:59:59.999 Tashkent
+      sort: 'dueAt',
     });
     expect(taskRepository.find).toHaveBeenNthCalledWith(2, {
       userId: 'user-1',
@@ -106,8 +106,8 @@ describe('ListTasksUsecase', () => {
       userId: 'user-1',
       statuses: [TaskStatus.Pending],
       kind: 'reminder',
-      fireAfter: new Date('2026-04-16T18:59:59.999Z'),
-      sort: 'fireAt',
+      dueAfter: new Date('2026-04-16T18:59:59.999Z'),
+      sort: 'dueAt',
     });
   });
 

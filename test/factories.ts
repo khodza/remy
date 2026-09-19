@@ -1,6 +1,7 @@
 import type { Task, TaskRepository } from '@domain/task/repository';
 import { TaskStatus } from '@domain/task';
 import type { User, UserRepository } from '@domain/user';
+import type { DigestKind, ReviewOutcome, ReviewState } from '@domain/rhythm';
 import type {
   ConversationRepository,
   ConversationState,
@@ -33,6 +34,9 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     nextAttemptAt: null,
     leadMinutes: null,
     leadSentFor: null,
+    nudgeAt: null,
+    nudgeCount: 0,
+    snoozeCount: 0,
     status: TaskStatus.Pending,
     priority: 'normal',
     categoryId: null,
@@ -91,8 +95,18 @@ export function mockUserRepository(
   current: () => User;
 } {
   let user = initial;
+  const claimed = new Set<string>();
   return {
     current: () => user,
+    listAll: jest.fn(async () => [user]),
+    claimDigest: jest.fn(
+      async (userId: string, kind: DigestKind, localDate: string) => {
+        const key = `${userId}:${kind}:${localDate}`;
+        if (claimed.has(key)) return false;
+        claimed.add(key);
+        return true;
+      },
+    ),
     save: jest.fn(async (_params) => user),
     findByTelegramUserId: jest.fn(async (_telegramUserId: number) => user),
     findById: jest.fn(async (id: string) => (id === user.id ? user : null)),
@@ -122,9 +136,41 @@ export function mockConversationRepository(): jest.Mocked<ConversationRepository
     lastTaskIds: [],
   };
   const undos = new Map<string, UndoRecord & { used: boolean }>();
+  const reviews = new Map<string, ReviewState>();
   let seq = 0;
   return {
     undos,
+    saveReview: jest.fn(
+      async (chatId: number, messageId: number, review: ReviewState) => {
+        reviews.set(`${chatId}:${messageId}`, structuredClone(review));
+        links.set(
+          `${chatId}:${messageId}`,
+          review.items.map((i) => i.taskId),
+        );
+      },
+    ),
+    getReview: jest.fn(async (chatId: number, messageId: number) => {
+      const r = reviews.get(`${chatId}:${messageId}`);
+      return r ? structuredClone(r) : null;
+    }),
+    resolveReviewItem: jest.fn(
+      async (
+        chatId: number,
+        messageId: number,
+        taskId: string,
+        outcome: ReviewOutcome,
+        newDueAt: Date | null,
+      ) => {
+        const r = reviews.get(`${chatId}:${messageId}`);
+        const item = r?.items.find(
+          (i) => i.taskId === taskId && i.outcome === null,
+        );
+        if (!r || !item) return null;
+        item.outcome = outcome;
+        item.newDueAt = newDueAt;
+        return structuredClone(r);
+      },
+    ),
     linkMessage: jest.fn(async (link) => {
       links.set(`${link.chatId}:${link.messageId}`, link.taskIds);
     }),

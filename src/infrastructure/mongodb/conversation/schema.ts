@@ -7,6 +7,29 @@ export const BotMessageSchema = new Schema(
     message_id: { type: Number, required: true },
     task_ids: { type: [String], required: true },
     kind: { type: String, required: true },
+    review: {
+      type: new Schema(
+        {
+          timezone: { type: String, required: true },
+          done_today: { type: Number, default: 0 },
+          items: [
+            new Schema(
+              {
+                task_id: { type: String, required: true },
+                title: { type: String, required: true },
+                due_at: { type: Date, required: true },
+                recurring: { type: Boolean, default: false },
+                outcome: { type: String, default: null },
+                new_due_at: { type: Date, default: null },
+              },
+              { _id: false },
+            ),
+          ],
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     created_at: {
       type: Date,
       default: () => new Date(),

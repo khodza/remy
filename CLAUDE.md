@@ -40,7 +40,8 @@ Path aliases: `@domain`, `@usecases`, `@infra`, `@application`, `@common` →
   (parser + transcription gateways), `bot/` (grammY service + handlers),
   `scheduler/` (cron).
 - `application/common/*` — Nest modules; `application/common/http/` —
-  controllers, DTOs (class-validator), guards, exception filter.
+  controllers, zod request validation (`ZodValidationPipe` + the contract),
+  mappers, guards, exception filter.
 - `common/config/env.ts` — **the only place that reads `process.env`**. Use
   `getEnv()`; add new variables to the zod schema and to `.env.example`.
 
@@ -89,11 +90,15 @@ The domain layer must not import the contract; the HTTP layer maps.
   never claimed by the scheduler; `priority` low/normal/high; `categoryId`
   points into `user.categories`; `source` records where it came from;
   `completedAt` for one-shots, `completions[]` for recurring Done taps;
-  `leadMinutes` is stored but its delivery lands in Phase 3.
-- `scheduledAt` is the current occurrence (series time for
-  recurring tasks); `snoozedUntil` moves only the current occurrence;
-  `nextFireAt = snoozedUntil ?? scheduledAt` is derived in the repository and
-  is what the scheduler queries; `recurrence.anchorAt` never moves.
+  `snoozeCount` counts snoozes/delays (the weekly wrap flags 4+).
+- `scheduledAt` is the current occurrence (series time for recurring tasks);
+  `snoozedUntil` moves only the current occurrence; `recurrence.anchorAt`
+  never moves. Two derived, stored times: `due_at = snoozedUntil ??
+  scheduledAt` (what views and chat queries filter on: `TaskFilter.dueAt*`)
+  and `next_fire_at` (what the scheduler claims: nudge, else snooze, else the
+  heads-up until sent, else due; `common/fire-time.ts`). Never filter views
+  on `next_fire_at`: a pending heads-up or nudge would move a task between
+  days. A new time or snooze resets `nudgeAt`/`nudgeCount`.
 - Scheduler: claim first (`claimDueReminder`, atomic), send second; transient
   failures release the claim with `nextAttemptAt`, permanent ones keep it.
 - Recurrence math (`common/recurrence.ts`) runs on the task's wall clock via
@@ -113,9 +118,17 @@ The domain layer must not import the contract; the HTTP layer maps.
   replies work), one pending question, one pending forward, last touched
   tasks, and Undo records (taken atomically, once). Record the undo BEFORE
   acting.
-- "Remind me before": `common/fire-time.ts` derives `nextFireAt`; the heads-up
-  is recorded (`leadSentFor`) before it is sent. On the wire `nextFireAt` is
-  the due time, never the heads-up time.
+- "Remind me before": the heads-up is recorded (`leadSentFor`) before it is
+  sent; one that is claimed after the due time (quiet hours, downtime) is
+  sent as the reminder itself. On the wire `nextFireAt` is the due time.
+- Scheduler pings (`SendPendingRemindersUsecase`): heads-up / due / nudge,
+  quiet hours release the claim until the window ends, escalation schedules
+  the next nudge after each send. Digests (`usecases/rhythm`): brief, review,
+  wrap, claimed once per local day via `UserRepository.claimDigest`; review
+  rows are stored on the bot message (`saveReview` / first-wins
+  `resolveReviewItem`) so the message can be redrawn after each tap.
+- Inline keyboards: never leave a trailing empty `row()` (build rows with
+  "row() before every item but the first").
 - Callbacks are answered exactly once in `CallbackHandler.handle`; message
   edits go through `ignoreNotModified`.
 - `noUncheckedIndexedAccess` is on: index access returns `T | undefined`.
