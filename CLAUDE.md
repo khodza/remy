@@ -44,8 +44,10 @@ Path aliases: `@domain`, `@usecases`, `@infra`, `@application`, `@common` →
 - `common/config/env.ts` — **the only place that reads `process.env`**. Use
   `getEnv()`; add new variables to the zod schema and to `.env.example`.
 
-Flow: message → `MessageHandler` → `ProcessTextMessageUsecase` →
-`TaskParserGateway` → `TaskRepository`. Cron each minute →
+Flow: message → `MessageHandler` → `AssistantResponder` →
+`HandleMessageUsecase` → `InterpreterGateway` (intent) → task use cases →
+`presentAssistantResult` (all Telegram formatting). The Mini App's NL create
+still goes `ProcessTextMessageUsecase` → `TaskParserGateway`. Cron each minute →
 `SendPendingRemindersUsecase` → `NotificationGateway`. Buttons →
 `CallbackHandler`.
 
@@ -100,6 +102,20 @@ The domain layer must not import the contract; the HTTP layer maps.
   and converts with `fromZonedTime`; `interpretModelOutput` validates it.
 - Bot handlers build EnsureUser input with `toEnsureUserInput()` and pick the
   zone with `resolveTimezone()` (`infrastructure/bot/user-input.ts`).
+- The assistant: prompt in `infrastructure/openai/assistant/prompt.ts`, strict
+  schema in `schema.ts`, and **all trust decisions in `interpret-output.ts`**
+  (pure, unit-tested with model-output fixtures). When the model misbehaves,
+  add a fixture there and a guard, not just prompt text. Never let the model
+  do clock arithmetic (`in_minutes`), never act on an ungrounded target. After
+  changing the prompt or schema run `npm run assistant:try` (real OpenAI call;
+  `ASSISTANT_DEBUG=1` prints the raw model JSON).
+- Conversation memory (`domain/conversation`): bot message → task links (so
+  replies work), one pending question, one pending forward, last touched
+  tasks, and Undo records (taken atomically, once). Record the undo BEFORE
+  acting.
+- "Remind me before": `common/fire-time.ts` derives `nextFireAt`; the heads-up
+  is recorded (`leadSentFor`) before it is sent. On the wire `nextFireAt` is
+  the due time, never the heads-up time.
 - Callbacks are answered exactly once in `CallbackHandler.handle`; message
   edits go through `ignoreNotModified`.
 - `noUncheckedIndexedAccess` is on: index access returns `T | undefined`.

@@ -103,6 +103,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     );
     this.bot.command('help', (ctx) => this.commandHandler.handleHelp(ctx));
 
+    // Forwarded messages come first: a forwarded text would otherwise be
+    // read as an instruction. They are kept and Remy asks "when?".
+    this.bot.on('message:forward_origin', (ctx) =>
+      this.messageHandler.handleForward(ctx),
+    );
+
     // Text messages
     this.bot.on('message:text', (ctx) => this.messageHandler.handleText(ctx));
 

@@ -33,6 +33,7 @@ prints the full list of problems (`src/common/config/env.ts` is the schema).
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | eslint with autofix |
 | `npm run build` | compile to `build/` (SWC) |
+| `npm run assistant:try -- "buy milk, call mom at 5"` | run phrases through the real intent router (OpenAI) and print what Remy would do; no DB, no Telegram |
 | `npm run seed` | insert a realistic sample day for the owner (`-- --reset`, `-- --dry-run`) |
 | `npm run contract:sync` / `contract:check` | regenerate / verify the frontend's copy of the HTTP contract |
 | `npm run start:prod:api` | run the compiled build |
@@ -41,11 +42,20 @@ A pre-commit hook runs eslint + prettier on staged `.ts` files.
 
 ## How it works
 
-1. **Capture.** `message:text` / `message:voice` → `MessageHandler` →
-   `ProcessTextMessageUsecase` (voice is transcribed with Whisper first) →
-   `TaskParserGateway` (gpt-4o-mini, JSON output, the prompt receives the
-   current time in the user's timezone) → task saved in Mongo, including an
-   optional recurrence.
+1. **Understand.** Every chat message (typed, voice after Whisper, or a
+   tapped answer) goes to `HandleMessageUsecase`. The `InterpreterGateway`
+   (OpenAI structured outputs, strict JSON schema) classifies it as one of
+   `create` (several tasks at once, todos without a date, "remind me before",
+   rich repeats), `query`, `complete`, `reschedule`, `delete`, `edit`, `chat`
+   or `unclear` (Remy asks one question with tappable answers). The model
+   sees the user's open tasks as a numbered list and answers with numbers, so
+   "the dentist" or a reply to a message resolves to real task ids.
+   `interpretAssistantOutput` then guards the result: durations are added by
+   the server, first occurrences are aligned, past times and ungrounded
+   targets become questions instead of actions. A forwarded message is kept
+   and Remy asks "when?". Every change records an Undo (10 minutes).
+   The Mini App's `POST /tasks` and `/ai/parse` still use the simpler
+   `TaskParserGateway`.
 2. **Remind.** A cron runs every minute (`ReminderScheduler` →
    `SendPendingRemindersUsecase`): roll ignored recurring tasks onto their
    latest occurrence, then atomically claim and send every pending task whose

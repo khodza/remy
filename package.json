@@ -29,7 +29,8 @@
     "contract:sync": "node scripts/sync-contract.mjs",
     "contract:check": "node scripts/sync-contract.mjs --check",
     "seed": "cross-env TS_NODE_PROJECT=scripts/tsconfig.json ts-node -r tsconfig-paths/register --transpile-only scripts/seed.ts",
-    "test:int": "jest --config ./test/jest-int.json --runInBand"
+    "test:int": "jest --config ./test/jest-int.json --runInBand",
+    "assistant:try": "cross-env TS_NODE_PROJECT=scripts/tsconfig.json ts-node -r tsconfig-paths/register --transpile-only scripts/try-assistant.ts"
   },
   "dependencies": {
     "@grammyjs/runner": "^2.0.3",

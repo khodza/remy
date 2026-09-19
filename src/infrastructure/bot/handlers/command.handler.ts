@@ -53,11 +53,12 @@ export class CommandHandler {
 
       await ctx.reply(
         `👋 <b>Welcome to Remy, your reminder assistant.</b>\n\n` +
-          `Just tell me what to remember and when:\n` +
-          `• "Remind me to call mom at 5 PM"\n` +
-          `• "Meeting tomorrow at 10am"\n` +
+          `Just tell me what to remember and when, typed or by voice:\n` +
+          `• "Call mom tomorrow at 17:00"\n` +
+          `• "Buy milk, dentist Friday 10" (several at once)\n` +
           `• "Take vitamins every day at 9"\n` +
-          `• Voice messages work too!\n\n` +
+          `• "What's on today?" · "Done with the dentist" · "Move it to 18:00"\n` +
+          `• Forward me a message and tell me when\n\n` +
           `<b>Commands</b>\n` +
           `/list – view your reminders\n` +
           `/delete – delete a reminder\n` +
@@ -203,25 +204,28 @@ export class CommandHandler {
   public async handleHelp(ctx: Context): Promise<void> {
     await ctx.reply(
       `📚 <b>How to use Remy</b>\n\n` +
-        `<b>Create a reminder</b>\n` +
-        `Send a message describing it:\n` +
-        `• "Remind me to call mom at 5 PM"\n` +
-        `• "Dentist appointment tomorrow at 2pm"\n` +
-        `• "Meeting next Monday at 10am"\n` +
-        `• Voice messages work too\n\n` +
-        `<b>Repeating reminders</b>\n` +
-        `• "Take vitamins every day at 9am"\n` +
-        `• "Standup every weekday at 9:30"\n` +
-        `• "Pay rent every month on the 1st"\n` +
-        `• "Water the plants every 3 days"\n` +
-        `Tapping ✅ Done on a repeating reminder moves it to the next time.\n\n` +
-        `<b>Commands</b>\n` +
-        `/list – all pending reminders\n` +
-        `/delete – delete a reminder\n` +
-        `/settings – set your timezone\n` +
-        `/help – this message\n\n` +
+        `Just talk to me, typed or by voice.\n\n` +
+        `<b>Remember things</b>\n` +
+        `• "Call mom tomorrow at 17:00"\n` +
+        `• "Buy milk, pay rent on the 1st, dentist Friday 10" (several at once)\n` +
+        `• "Flight Saturday 18:00, remind me 3 hours before"\n` +
+        `• "Someday: learn to make plov" (no date → Inbox)\n` +
+        `• Forward me any message and tell me when\n\n` +
+        `<b>Repeating</b>\n` +
+        `• "Vitamins every day at 9", "Standup every weekday 9:30"\n` +
+        `• "Gym every Mon and Thu at 7 until December"\n` +
+        `• "Rent on the last day of every month", "Mom's birthday every year"\n\n` +
+        `<b>Ask and manage</b>\n` +
+        `• "What's on today?", "What do I have this week?", "Anything overdue?"\n` +
+        `• "Done with the dentist", "Move the dentist to 18:00"\n` +
+        `• "Push everything today to tomorrow", "Delete the dry cleaning one"\n` +
+        `• Reply to any of my messages: "make it 11", "in 2 hours", "done"\n\n` +
         `<b>When it's time</b>\n` +
-        `I send the reminder with buttons: ✅ Done, ⏰ +15 min, ⏰ +1 hour.`,
+        `Buttons show the resulting time: ✅ Done, +15m, +1h, Tonight, Tomorrow. ` +
+        `Every change has an ↩ Undo for 10 minutes.\n\n` +
+        `<b>Commands</b>\n` +
+        `/list – pending reminders · /delete – delete one\n` +
+        `/settings – timezone · /help – this message`,
       { parse_mode: 'HTML' },
     );
   }
