@@ -2,7 +2,8 @@ import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Domain } from '@common/tokens';
 import type { TaskParserGateway } from '@domain/ai';
-import type { Recurrence } from '@domain/task';
+import type { RecurrenceInput } from '@contract/remy-contract';
+import { recurrenceToWire } from '../mappers/task.mapper';
 import type { UserRepository } from '@domain/user';
 import { UserNotFoundError } from '@domain/user';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -14,7 +15,7 @@ import type { AuthContext } from '../types';
 export interface ParsedTaskDto {
   description: string;
   scheduledAt: string;
-  recurrence: Recurrence | null;
+  recurrence: RecurrenceInput | null;
 }
 
 @Controller('ai')
@@ -46,7 +47,9 @@ export class AiController {
     return {
       description: result.description,
       scheduledAt: result.scheduledAt.toISOString(),
-      recurrence: result.recurrence ?? null,
+      recurrence: result.recurrence
+        ? recurrenceToWire(result.recurrence)
+        : null,
     };
   }
 }

@@ -1,5 +1,5 @@
-import { SendReminderInput } from './types';
+import { SendReminderInput, SentReminder } from './types';
 
 export interface NotificationGateway {
-  sendReminder(input: SendReminderInput): Promise<void>;
+  sendReminder(input: SendReminderInput): Promise<SentReminder>;
 }

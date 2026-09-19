@@ -3,12 +3,17 @@ import type { TaskRepository } from '@domain/task/repository';
 import type { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
 import type { ScheduledTask, Task } from '@domain/task';
-import { makeTask, mockTaskRepository } from '@test/factories';
+import {
+  makeTask,
+  mockConversationRepository,
+  mockTaskRepository,
+} from '@test/factories';
 
 describe('SendPendingRemindersUsecase', () => {
   let usecase: SendPendingRemindersUsecase;
   let taskRepository: jest.Mocked<TaskRepository>;
   let notificationGateway: jest.Mocked<NotificationGateway>;
+  let conversations: ReturnType<typeof mockConversationRepository>;
 
   const now = new Date('2026-04-16T12:00:00Z');
 
@@ -30,10 +35,14 @@ describe('SendPendingRemindersUsecase', () => {
     jest.useFakeTimers({ now });
     jest.spyOn(console, 'error').mockImplementation(() => {});
     taskRepository = mockTaskRepository();
-    notificationGateway = { sendReminder: jest.fn() };
+    notificationGateway = {
+      sendReminder: jest.fn().mockResolvedValue({ messageId: 900 }),
+    };
+    conversations = mockConversationRepository();
     usecase = new SendPendingRemindersUsecase(
       taskRepository,
       notificationGateway,
+      conversations,
     );
   });
 
@@ -59,9 +68,18 @@ describe('SendPendingRemindersUsecase', () => {
       chatId: 12345,
       taskId: 'task-2',
       description: 'Buy groceries',
-      scheduledAt: new Date('2026-04-16T11:30:00Z'),
+      kind: 'due',
+      dueAt: new Date('2026-04-16T11:30:00Z'), // the snooze, not the series time
       timezone: 'Asia/Tashkent',
+      notes: null,
       recurrence: { type: 'daily' },
+    });
+    // The reminder message is linked to its task so a reply can snooze it.
+    expect(conversations.linkMessage).toHaveBeenLastCalledWith({
+      chatId: 12345,
+      messageId: 900,
+      taskIds: ['task-2'],
+      kind: 'reminder',
     });
     expect(result).toEqual({ sentCount: 2, failedCount: 0 });
     // The claim already stamped lastSentAt; no second write per task.
@@ -85,9 +103,9 @@ describe('SendPendingRemindersUsecase', () => {
       makeTask({ id: 'c' }),
     ]);
     notificationGateway.sendReminder
-      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ messageId: 1 })
       .mockRejectedValueOnce(new Error('send failed'))
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce({ messageId: 2 });
 
     const result = await usecase.execute();
 
@@ -135,6 +153,42 @@ describe('SendPendingRemindersUsecase', () => {
       previous,
       new Date('2026-04-16T12:02:00Z'),
     );
+  });
+
+  it('sends the "remind me before" heads-up first and records it before sending', async () => {
+    const dueAt = new Date('2026-04-16T12:30:00Z');
+    const task = makeTask({
+      scheduledAt: dueAt,
+      leadMinutes: 30,
+      nextFireAt: new Date('2026-04-16T12:00:00Z'),
+    });
+    queueClaims([task]);
+    taskRepository.update.mockResolvedValue(task);
+
+    await usecase.execute();
+
+    expect(taskRepository.update).toHaveBeenCalledWith({
+      id: 'task-1',
+      leadSentFor: dueAt,
+    });
+    expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'heads_up', dueAt }),
+    );
+    expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
+      notificationGateway.sendReminder.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('after the heads-up, the same task fires as a normal due reminder', async () => {
+    const dueAt = new Date('2026-04-16T12:00:00Z');
+    queueClaims([
+      makeTask({ scheduledAt: dueAt, leadMinutes: 30, leadSentFor: dueAt }),
+    ]);
+    await usecase.execute();
+    expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'due' }),
+    );
+    expect(taskRepository.update).not.toHaveBeenCalled();
   });
 
   it('rolls an ignored recurring task onto its latest occurrence before sending', async () => {

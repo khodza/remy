@@ -3,6 +3,10 @@ import { Types, HydratedDocument } from 'mongoose';
 export type RecurrenceSubdoc = {
   type: string;
   intervalDays?: number;
+  interval?: number;
+  byWeekday?: number[];
+  lastDayOfMonth?: boolean;
+  until?: Date;
   anchorAt?: Date;
 };
 
@@ -33,6 +37,7 @@ export type TaskDocument = {
   next_fire_at?: Date | null;
   next_attempt_at?: Date | null;
   lead_minutes?: number | null;
+  lead_sent_for?: Date | null;
   status: string;
   priority?: string;
   category_id?: string | null;

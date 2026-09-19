@@ -18,6 +18,7 @@ import {
   SnoozeTaskUsecase,
 } from '@usecases/task';
 import { UserModule } from '../user/user.module';
+import { ConversationModule } from '../conversation/conversation.module';
 import { OpenAIModule } from '../openai/openai.module';
 import { NotificationModule } from '../notification/notification.module';
 
@@ -29,6 +30,7 @@ import { NotificationModule } from '../notification/notification.module';
     OpenAIModule,
     NotificationModule,
     UserModule,
+    ConversationModule,
   ],
   providers: [
     {

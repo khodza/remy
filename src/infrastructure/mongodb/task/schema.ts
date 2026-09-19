@@ -5,10 +5,22 @@ const RecurrenceSchema = new Schema(
   {
     type: {
       type: String,
-      enum: ['daily', 'weekdays', 'weekly', 'monthly', 'every_n_days'],
+      enum: [
+        'daily',
+        'weekdays',
+        'weekly',
+        'monthly',
+        'every_n_days',
+        'yearly',
+      ],
       required: true,
     },
     intervalDays: { type: Number, required: false, min: 1 },
+    interval: { type: Number, required: false, min: 1 },
+    // `default: undefined` stops Mongoose from materialising an empty array.
+    byWeekday: { type: [Number], required: false, default: undefined },
+    lastDayOfMonth: { type: Boolean, required: false },
+    until: { type: Date, required: false },
     anchorAt: { type: Date, required: false },
   },
   { _id: false },
@@ -49,6 +61,7 @@ export const TaskSchema = new Schema<TaskDocument>(
     next_fire_at: { type: Date, required: false, default: null },
     next_attempt_at: { type: Date, required: false, default: null },
     lead_minutes: { type: Number, default: null, min: 1 },
+    lead_sent_for: { type: Date, default: null },
     status: {
       type: String,
       required: true,

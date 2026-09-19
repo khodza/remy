@@ -38,6 +38,19 @@ describe('loadEnv', () => {
     ]);
   });
 
+  it('treats empty values (KEY= in .env) as unset', () => {
+    const env = loadEnv({
+      ...valid,
+      OWNER_TELEGRAM_ID: '',
+      OWNER_TIMEZONE: '',
+      MINI_APP_URL: '',
+      CORS_ORIGINS: '',
+    });
+    expect(env.OWNER_TELEGRAM_ID).toBeUndefined();
+    expect(env.MINI_APP_URL).toBeUndefined();
+    expect(env.CORS_ORIGINS).toEqual([]);
+  });
+
   it('lists every problem at once', () => {
     expect.assertions(3);
     try {

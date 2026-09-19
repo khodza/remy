@@ -2,7 +2,10 @@ import { Injectable, Inject } from '@nestjs/common';
 import { TaskRepository } from '@domain/task/repository';
 import { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
+import type { ConversationRepository } from '@domain/conversation';
+import type { ScheduledTask } from '@domain/task';
 import { Domain } from '@common/tokens';
+import { effectiveDueAt } from '@common/fire-time';
 import { computeLatestOccurrence } from '@common/recurrence';
 import { addMinutes } from 'date-fns';
 import { SendPendingRemindersOutput } from './types';
@@ -19,6 +22,8 @@ export class SendPendingRemindersUsecase {
     private readonly taskRepository: TaskRepository,
     @Inject(Domain.Notification.Gateway)
     private readonly notificationGateway: NotificationGateway,
+    @Inject(Domain.Conversation.Repository)
+    private readonly conversationRepository: ConversationRepository,
   ) {}
 
   public async execute(): Promise<SendPendingRemindersOutput> {
@@ -44,15 +49,45 @@ export class SendPendingRemindersUsecase {
 
       const { task, previousLastSentAt } = claimed;
       try {
-        await this.notificationGateway.sendReminder({
+        const kind = isHeadsUp(task) ? 'heads_up' : 'due';
+        if (kind === 'heads_up') {
+          // Record the heads-up BEFORE sending: this moves nextFireAt to the
+          // due time. If the send then fails we lose a heads-up, never the
+          // reminder itself (the other order could strand the task).
+          await this.taskRepository.update({
+            id: task.id,
+            leadSentFor: task.scheduledAt,
+          });
+        }
+
+        const sent = await this.notificationGateway.sendReminder({
           chatId: task.telegramChatId,
           taskId: task.id,
           description: task.description,
-          scheduledAt: task.nextFireAt,
+          kind,
+          dueAt: effectiveDueAt(task) ?? task.scheduledAt,
           timezone: task.timezone,
+          notes: task.notes,
           recurrence: task.recurrence ?? null,
         });
         sentCount++;
+
+        // Lets "in 2 hours" as a reply to this reminder find its task.
+        if (sent.messageId !== null) {
+          await this.conversationRepository
+            .linkMessage({
+              chatId: task.telegramChatId,
+              messageId: sent.messageId,
+              taskIds: [task.id],
+              kind: 'reminder',
+            })
+            .catch((linkError: unknown) => {
+              console.error(
+                `Failed to link reminder message for task ${task.id}:`,
+                linkError,
+              );
+            });
+        }
       } catch (error) {
         console.error(`Failed to send reminder for task ${task.id}:`, error);
         failedCount++;
@@ -115,4 +150,14 @@ export class SendPendingRemindersUsecase {
       console.error('Failed to fetch overdue recurring tasks:', error);
     }
   }
+}
+
+/** The claimed fire time is the "remind me before" ping, not the due time. */
+function isHeadsUp(task: ScheduledTask): boolean {
+  return (
+    task.snoozedUntil === null &&
+    task.leadMinutes !== null &&
+    task.leadSentFor?.getTime() !== task.scheduledAt.getTime() &&
+    task.nextFireAt.getTime() < task.scheduledAt.getTime()
+  );
 }

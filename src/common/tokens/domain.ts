@@ -12,4 +12,10 @@ export const Domain = {
   Notification: {
     Gateway: Symbol.for('Domain.Notification.Gateway'),
   },
+  Conversation: {
+    Repository: Symbol.for('Domain.Conversation.Repository'),
+  },
+  Assistant: {
+    InterpreterGateway: Symbol.for('Domain.Assistant.InterpreterGateway'),
+  },
 };

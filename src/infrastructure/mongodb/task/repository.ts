@@ -23,6 +23,7 @@ import {
 } from '@domain/task/errors';
 import { ApplicationError } from '@domain/error';
 import { getEnv } from '@common/config';
+import { deriveNextFireAt } from '@common/fire-time';
 
 const LEGACY_TIMEZONE_FALLBACK = 'UTC';
 const LEGACY_SOURCE: TaskSource = {
@@ -111,9 +112,15 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         scheduled_at: params.scheduledAt,
         timezone: params.timezone,
         snoozed_until: null,
-        next_fire_at: params.scheduledAt,
+        next_fire_at: deriveNextFireAt({
+          scheduledAt: params.scheduledAt,
+          snoozedUntil: null,
+          leadMinutes: params.leadMinutes ?? null,
+          leadSentFor: null,
+        }),
         next_attempt_at: null,
         lead_minutes: params.leadMinutes ?? null,
+        lead_sent_for: null,
         status: TaskStatus.Pending,
         priority: params.priority ?? 'normal',
         category_id: params.categoryId ?? null,
@@ -263,30 +270,36 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       if (params.recurrence !== undefined)
         set['recurrence'] = recurrenceToSubdoc(params.recurrence);
 
-      // next_fire_at is derived; recompute whenever either input changes.
+      // next_fire_at is derived; recompute whenever one of its inputs changes.
       if (
         params.scheduledAt !== undefined ||
-        params.snoozedUntil !== undefined
+        params.snoozedUntil !== undefined ||
+        params.leadMinutes !== undefined ||
+        params.leadSentFor !== undefined
       ) {
         const existing = await this.model.findById(params.id);
         if (!existing) {
           throw new TaskNotFoundError(`Task with id ${params.id} not found`);
         }
-        const scheduledAt =
-          params.scheduledAt !== undefined
-            ? params.scheduledAt
-            : existing.scheduled_at;
-        const snoozedUntil =
-          params.snoozedUntil !== undefined
-            ? params.snoozedUntil
-            : (existing.snoozed_until ?? null);
-        // A todo (no scheduledAt) never fires, whatever the snooze says.
-        set['next_fire_at'] =
-          scheduledAt === null ? null : (snoozedUntil ?? scheduledAt);
+        const pick = <T>(next: T | undefined, current: T): T =>
+          next !== undefined ? next : current;
+        set['next_fire_at'] = deriveNextFireAt({
+          scheduledAt: pick(params.scheduledAt, existing.scheduled_at ?? null),
+          snoozedUntil: pick(
+            params.snoozedUntil,
+            existing.snoozed_until ?? null,
+          ),
+          leadMinutes: pick(params.leadMinutes, existing.lead_minutes ?? null),
+          leadSentFor: pick(params.leadSentFor, existing.lead_sent_for ?? null),
+        });
       }
 
       const update: Record<string, unknown> = { $set: set };
-      if (params.pushCompletion) {
+      if (params.truncateCompletions !== undefined) {
+        update['$push'] = {
+          completions: { $each: [], $slice: params.truncateCompletions },
+        };
+      } else if (params.pushCompletion) {
         update['$push'] = {
           completions: {
             at: params.pushCompletion.at,
@@ -335,6 +348,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       nextFireAt,
       nextAttemptAt: document.next_attempt_at ?? null,
       leadMinutes: document.lead_minutes ?? null,
+      leadSentFor: document.lead_sent_for ?? null,
       status: document.status as TaskStatus,
       priority: (document.priority as Priority | undefined) ?? 'normal',
       categoryId: document.category_id ?? null,
@@ -357,9 +371,14 @@ function recurrenceToSubdoc(
 ): RecurrenceSubdoc | null {
   if (!recurrence) return null;
   const doc: RecurrenceSubdoc = { type: recurrence.type };
-  if (recurrence.intervalDays !== undefined) {
+  if (recurrence.intervalDays !== undefined)
     doc.intervalDays = recurrence.intervalDays;
-  }
+  if (recurrence.interval !== undefined) doc.interval = recurrence.interval;
+  if (recurrence.byWeekday !== undefined)
+    doc.byWeekday = [...recurrence.byWeekday];
+  if (recurrence.lastDayOfMonth !== undefined)
+    doc.lastDayOfMonth = recurrence.lastDayOfMonth;
+  if (recurrence.until !== undefined) doc.until = recurrence.until;
   if (recurrence.anchorAt !== undefined) doc.anchorAt = recurrence.anchorAt;
   return doc;
 }
@@ -368,10 +387,16 @@ function subdocToRecurrence(
   subdoc: RecurrenceSubdoc | null | undefined,
 ): Recurrence | null {
   if (!subdoc) return null;
-  const { type, intervalDays, anchorAt } = subdoc;
-  const recurrence: Recurrence = { type: type as Recurrence['type'] };
-  if (typeof intervalDays === 'number') recurrence.intervalDays = intervalDays;
-  if (anchorAt instanceof Date) recurrence.anchorAt = anchorAt;
+  const recurrence: Recurrence = { type: subdoc.type as Recurrence['type'] };
+  if (typeof subdoc.intervalDays === 'number')
+    recurrence.intervalDays = subdoc.intervalDays;
+  if (typeof subdoc.interval === 'number')
+    recurrence.interval = subdoc.interval;
+  if (Array.isArray(subdoc.byWeekday) && subdoc.byWeekday.length > 0)
+    recurrence.byWeekday = [...subdoc.byWeekday];
+  if (subdoc.lastDayOfMonth === true) recurrence.lastDayOfMonth = true;
+  if (subdoc.until instanceof Date) recurrence.until = subdoc.until;
+  if (subdoc.anchorAt instanceof Date) recurrence.anchorAt = subdoc.anchorAt;
   return recurrence;
 }
 

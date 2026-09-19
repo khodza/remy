@@ -72,7 +72,8 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
       leadMinutes: 30,
       timezone: 'Asia/Tashkent',
       scheduledAt: past,
-      nextFireAt: past,
+      // leadMinutes 30 → the scheduler fires the heads-up first.
+      nextFireAt: new Date('2026-04-16T09:30:00Z'),
       snoozedUntil: null,
       recurrence: { type: 'monthly', anchorAt: past },
       source: {

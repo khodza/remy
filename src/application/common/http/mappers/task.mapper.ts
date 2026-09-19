@@ -1,8 +1,10 @@
-import type { Task } from '@domain/task';
-import type { TaskWire } from '@contract/remy-contract';
+import type { Recurrence, Task } from '@domain/task';
+import { effectiveDueAt } from '@common/fire-time';
+import type { RecurrenceInput, TaskWire } from '@contract/remy-contract';
 
 /** Domain task → the wire shape defined by the contract. */
 export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
+  const dueAt = effectiveDueAt(task);
   return {
     id: task.id,
     description: task.description,
@@ -11,19 +13,15 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
     scheduledAt: task.scheduledAt ? task.scheduledAt.toISOString() : null,
     timezone: task.timezone,
     snoozedUntil: task.snoozedUntil ? task.snoozedUntil.toISOString() : null,
-    nextFireAt: task.nextFireAt ? task.nextFireAt.toISOString() : null,
+    // For the client this is "when it is due" (snooze included). The
+    // scheduler's internal fire time can be earlier (a pending heads-up) and
+    // must not leak into what the app shows as the task's time.
+    nextFireAt: dueAt ? dueAt.toISOString() : null,
     leadMinutes: task.leadMinutes,
     status: task.status,
     priority: task.priority,
     categoryId: task.categoryId,
-    recurrence: task.recurrence
-      ? {
-          type: task.recurrence.type,
-          ...(task.recurrence.intervalDays !== undefined
-            ? { intervalDays: task.recurrence.intervalDays }
-            : {}),
-        }
-      : null,
+    recurrence: task.recurrence ? recurrenceToWire(task.recurrence) : null,
     source: {
       type: task.source.type,
       originalText: task.source.originalText,
@@ -34,9 +32,47 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
     completionsCount: task.completions.length,
     isOverdue:
       task.status === 'pending' &&
-      task.nextFireAt !== null &&
-      task.nextFireAt.getTime() < now.getTime(),
+      dueAt !== null &&
+      dueAt.getTime() < now.getTime(),
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
+  };
+}
+
+/** Domain recurrence → wire (the anchor is internal and never leaves the server). */
+export function recurrenceToWire(recurrence: Recurrence): RecurrenceInput {
+  return {
+    type: recurrence.type,
+    ...(recurrence.intervalDays !== undefined
+      ? { intervalDays: recurrence.intervalDays }
+      : {}),
+    ...(recurrence.interval !== undefined
+      ? { interval: recurrence.interval }
+      : {}),
+    ...(recurrence.byWeekday !== undefined
+      ? { byWeekday: [...recurrence.byWeekday] }
+      : {}),
+    ...(recurrence.lastDayOfMonth ? { lastDayOfMonth: true } : {}),
+    ...(recurrence.until !== undefined
+      ? { until: recurrence.until.toISOString() }
+      : {}),
+  };
+}
+
+/** Wire recurrence (request body) → domain, without an anchor; use cases add it. */
+export function recurrenceFromWire(
+  input: RecurrenceInput,
+): Omit<Recurrence, 'anchorAt'> {
+  return {
+    type: input.type,
+    ...(input.intervalDays !== undefined
+      ? { intervalDays: input.intervalDays }
+      : {}),
+    ...(input.interval !== undefined ? { interval: input.interval } : {}),
+    ...(input.byWeekday !== undefined
+      ? { byWeekday: [...input.byWeekday] }
+      : {}),
+    ...(input.lastDayOfMonth ? { lastDayOfMonth: true } : {}),
+    ...(input.until !== undefined ? { until: new Date(input.until) } : {}),
   };
 }

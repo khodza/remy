@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '2.0.0';
+export const CONTRACT_VERSION = '2.1.0';
 
 // ---------------------------------------------------------------- enums ---
 
@@ -38,6 +38,7 @@ export const RecurrenceType = z.enum([
   'weekly',
   'monthly',
   'every_n_days',
+  'yearly',
 ]);
 export type RecurrenceType = z.infer<typeof RecurrenceType>;
 
@@ -71,12 +72,25 @@ const ObjectIdString = z
   .regex(/^[0-9a-f]{24}$/i, 'Expected a 24-char hex id');
 const HexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Expected #RRGGBB');
 
-export const Recurrence = z.object({
-  type: RecurrenceType,
-  /** Only meaningful for every_n_days. */
-  intervalDays: z.number().int().positive().optional(),
-});
-export type Recurrence = z.infer<typeof Recurrence>;
+function buildRecurrence<D extends z.ZodType>(date: D) {
+  return z.object({
+    type: RecurrenceType,
+    /** Only meaningful for every_n_days. */
+    intervalDays: z.number().int().positive().optional(),
+    /** Every N weeks / months / years (weekly, monthly, yearly). Default 1. */
+    interval: z.number().int().min(1).max(52).optional(),
+    /** Weekly only: days of the week, 0 = Sunday … 6 = Saturday ("Mon and Thu" = [1, 4]). */
+    byWeekday: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+    /** Monthly only: always the last day of the month. */
+    lastDayOfMonth: z.boolean().optional(),
+    /** The series ends after this instant; the last Done completes the task. */
+    until: date.optional(),
+  });
+}
+
+/** Recurrence as sent in requests and on the wire (until is an ISO string). */
+export const Recurrence = buildRecurrence(IsoInstant);
+export type RecurrenceInput = z.infer<typeof Recurrence>;
 
 export const TaskSource = z.object({
   type: SourceType,
@@ -92,6 +106,7 @@ export type TaskSource = z.infer<typeof TaskSource>;
 // ------------------------------------------------- responses (date-generic) ---
 
 function buildResponses<D extends z.ZodType>(date: D) {
+  const RecurrenceOut = buildRecurrence(date);
   const Task = z.object({
     id: z.string(),
     /** The title: what to do. */
@@ -104,14 +119,14 @@ function buildResponses<D extends z.ZodType>(date: D) {
     timezone: z.string(),
     /** Set when only the current occurrence of a recurring task was delayed. */
     snoozedUntil: date.nullable(),
-    /** When the reminder actually fires: snoozedUntil ?? scheduledAt. Null for todos. */
+    /** When the task is due for the user: snoozedUntil ?? scheduledAt. Null for todos. (A "remind me before" heads-up fires earlier; that time is internal.) */
     nextFireAt: date.nullable(),
-    /** Heads-up this many minutes before scheduledAt (delivery lands in Phase 3). */
+    /** Heads-up ping this many minutes before scheduledAt, then the reminder itself. */
     leadMinutes: z.number().int().positive().nullable(),
     status: TaskStatus,
     priority: Priority,
     categoryId: z.string().nullable(),
-    recurrence: Recurrence.nullable(),
+    recurrence: RecurrenceOut.nullable(),
     source: TaskSource,
     completedAt: date.nullable(),
     /** How many occurrences of a recurring task were marked done. */
@@ -139,7 +154,7 @@ function buildResponses<D extends z.ZodType>(date: D) {
     ParsedTask: z.object({
       description: z.string(),
       scheduledAt: date,
-      recurrence: Recurrence.nullable(),
+      recurrence: RecurrenceOut.nullable(),
     }),
   };
 }
@@ -154,6 +169,8 @@ export type TaskWire = z.infer<typeof wire.Task>;
 export type User = z.infer<typeof client.User>;
 export type AuthResult = z.infer<typeof client.AuthResult>;
 export type ParsedTask = z.infer<typeof client.ParsedTask>;
+/** Recurrence as the frontend sees it in responses (until is a Date). */
+export type Recurrence = NonNullable<Task['recurrence']>;
 
 export const DeleteResult = z.object({ success: z.boolean() });
 export type DeleteResult = z.infer<typeof DeleteResult>;

@@ -1,35 +1,40 @@
 import { Injectable } from '@nestjs/common';
 import { GrammyError, InlineKeyboard } from 'grammy';
+import { formatInTimeZone } from 'date-fns-tz';
+import { addMinutes, differenceInMinutes } from 'date-fns';
 import { NotificationGateway } from '@domain/notification/gateway';
-import { SendReminderInput } from '@domain/notification/gateway/types';
+import {
+  SendReminderInput,
+  SentReminder,
+} from '@domain/notification/gateway/types';
 import { NotificationFailedError } from '@domain/notification/errors';
 import { TelegramBotService } from '../bot.service';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
 import { formatForUser } from '@common/format-date';
+import { snoozePresets } from '@common/fire-time';
+import { getEnv } from '@common/config';
+
+const QUOTE_MAX = 300;
 
 @Injectable()
 export class NotificationGatewayImpl implements NotificationGateway {
   constructor(private readonly botService: TelegramBotService) {}
 
-  public async sendReminder(input: SendReminderInput): Promise<void> {
+  public async sendReminder(input: SendReminderInput): Promise<SentReminder> {
     const bot = this.botService.getBot();
-
-    const keyboard = new InlineKeyboard()
-      .text('✅ Done', `complete:${input.taskId}`)
-      .text('⏰ +15min', `delay:${input.taskId}:15`)
-      .row()
-      .text('⏰ +1hr', `delay:${input.taskId}:60`);
-
-    const repeat = describeRecurrence(input.recurrence);
-    const repeatLine = repeat ? `\n🔁 Repeats ${repeat}` : '';
+    const now = new Date();
 
     try {
-      await bot.api.sendMessage(
+      const message = await bot.api.sendMessage(
         input.chatId,
-        `🔔 <b>Reminder!</b>\n\n📝 ${escapeHtml(input.description)}\n⏰ ${formatForUser(input.scheduledAt, input.timezone)}${repeatLine}`,
-        { reply_markup: keyboard, parse_mode: 'HTML' },
+        reminderText(input, now),
+        {
+          reply_markup: reminderKeyboard(input, now),
+          parse_mode: 'HTML',
+        },
       );
+      return { messageId: message?.message_id ?? null };
     } catch (error) {
       // 400 (bad request, chat not found) and 403 (bot blocked, user
       // deactivated) fail the same way on every retry; anything else
@@ -44,4 +49,81 @@ export class NotificationGatewayImpl implements NotificationGateway {
       );
     }
   }
+}
+
+export function reminderText(input: SendReminderInput, now: Date): string {
+  const lines: string[] = [];
+  if (input.kind === 'heads_up') {
+    const minutes = Math.max(1, differenceInMinutes(input.dueAt, now));
+    lines.push(`⏳ <b>In ${humanMinutes(minutes)}</b>`);
+  } else {
+    lines.push('🔔 <b>Reminder</b>');
+  }
+  lines.push('', `📝 ${escapeHtml(input.description)}`);
+  lines.push(`⏰ ${formatForUser(input.dueAt, input.timezone)}`);
+  const repeat = describeRecurrence(input.recurrence, input.timezone);
+  if (repeat) lines.push(`🔁 Repeats ${repeat}`);
+  if (input.notes) lines.push('', `🗒 ${escapeHtml(input.notes)}`);
+  if (input.sourceQuote) {
+    const text =
+      input.sourceQuote.text.length > QUOTE_MAX
+        ? `${input.sourceQuote.text.slice(0, QUOTE_MAX)}…`
+        : input.sourceQuote.text;
+    const from = input.sourceQuote.from
+      ? `${escapeHtml(input.sourceQuote.from)}: `
+      : '';
+    lines.push('', `<blockquote>${from}${escapeHtml(text)}</blockquote>`);
+  }
+  if (input.kind === 'due') {
+    lines.push(
+      '',
+      '<i>Reply with a time (“in 2 hours”, “tomorrow 9”) to snooze.</i>',
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Done · +15m → 11:15 · +1h → 12:00 / Tonight 20:00 · Tomorrow 09:00 /
+ * Open (when the Mini App URL is configured). Every snooze label shows the
+ * resulting time so there is nothing to compute in your head.
+ */
+export function reminderKeyboard(
+  input: Pick<SendReminderInput, 'taskId' | 'timezone' | 'kind'>,
+  now: Date,
+): InlineKeyboard {
+  const clock = (d: Date): string =>
+    formatInTimeZone(d, input.timezone, 'HH:mm');
+  const keyboard = new InlineKeyboard().text(
+    '✅ Done',
+    `complete:${input.taskId}`,
+  );
+
+  if (input.kind === 'due') {
+    keyboard
+      .text(`+15m → ${clock(addMinutes(now, 15))}`, `delay:${input.taskId}:15`)
+      .text(`+1h → ${clock(addMinutes(now, 60))}`, `delay:${input.taskId}:60`)
+      .row();
+    for (const preset of snoozePresets(now, input.timezone)) {
+      keyboard.text(
+        `${preset.label} ${clock(preset.at)}`,
+        `snz:${input.taskId}:${preset.key}`,
+      );
+    }
+  }
+
+  const appUrl = getEnv().MINI_APP_URL;
+  if (appUrl) {
+    const url = new URL(appUrl);
+    url.searchParams.set('task', input.taskId);
+    keyboard.row().webApp('⋯ Open in app', url.toString());
+  }
+  return keyboard;
+}
+
+function humanMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }

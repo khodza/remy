@@ -72,9 +72,9 @@ describe('computeNextOccurrence', () => {
       new Date('2026-01-31T10:00:00Z'),
     );
     expect(feb).toEqual(new Date('2026-02-28T09:00:00Z'));
-    const mar = computeNextOccurrence(feb, monthly, feb);
+    const mar = computeNextOccurrence(feb!, monthly, feb!);
     expect(mar).toEqual(new Date('2026-03-31T09:00:00Z'));
-    const apr = computeNextOccurrence(mar, monthly, mar);
+    const apr = computeNextOccurrence(mar!, monthly, mar!);
     expect(apr).toEqual(new Date('2026-04-30T09:00:00Z'));
   });
 
@@ -123,6 +123,109 @@ describe('computeNextOccurrence', () => {
       );
       expect(next).toEqual(new Date('2026-09-21T18:30:00Z'));
     });
+  });
+});
+
+describe('richer grammar', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('"every Mon and Thu" walks the listed weekdays', () => {
+    const rule = { type: 'weekly' as const, byWeekday: [1, 4] };
+    const mon = at('2026-09-14T07:00:00Z'); // Monday
+    const thu = computeNextOccurrence(mon, rule, mon)!;
+    expect(thu).toEqual(at('2026-09-17T07:00:00Z'));
+    expect(computeNextOccurrence(thu, rule, thu)).toEqual(
+      at('2026-09-21T07:00:00Z'),
+    );
+  });
+
+  it('"every 2 weeks on Mon and Thu" skips the off week, counted from the anchor', () => {
+    const mon = at('2026-09-14T07:00:00Z');
+    const rule = {
+      type: 'weekly' as const,
+      interval: 2,
+      byWeekday: [1, 4],
+      anchorAt: mon,
+    };
+    const thu = computeNextOccurrence(mon, rule, mon)!;
+    expect(thu).toEqual(at('2026-09-17T07:00:00Z'));
+    expect(computeNextOccurrence(thu, rule, thu)).toEqual(
+      at('2026-09-28T07:00:00Z'),
+    );
+  });
+
+  it('"every 2 weeks" without weekdays', () => {
+    const d = at('2026-09-14T07:00:00Z');
+    expect(
+      computeNextOccurrence(d, { type: 'weekly', interval: 2 }, d),
+    ).toEqual(at('2026-09-28T07:00:00Z'));
+  });
+
+  it('"last day of every month"', () => {
+    const rule = { type: 'monthly' as const, lastDayOfMonth: true };
+    const jan = at('2026-01-31T09:00:00Z');
+    const feb = computeNextOccurrence(jan, rule, jan)!;
+    expect(feb).toEqual(at('2026-02-28T09:00:00Z'));
+    expect(computeNextOccurrence(feb, rule, feb)).toEqual(
+      at('2026-03-31T09:00:00Z'),
+    );
+  });
+
+  it('"every 3 months" keeps the anchor day', () => {
+    const d = at('2026-01-31T09:00:00Z');
+    expect(
+      computeNextOccurrence(
+        d,
+        { type: 'monthly', interval: 3, anchorAt: d },
+        d,
+      ),
+    ).toEqual(at('2026-04-30T09:00:00Z'));
+  });
+
+  it('yearly: a 29 Feb birthday falls on 28 Feb in common years and returns', () => {
+    const leap = at('2028-02-29T09:00:00Z');
+    const rule = { type: 'yearly' as const, anchorAt: leap };
+    const y1 = computeNextOccurrence(leap, rule, leap)!;
+    expect(y1).toEqual(at('2029-02-28T09:00:00Z'));
+    const y4 = [1, 2, 3].reduce((d) => computeNextOccurrence(d, rule, d)!, y1);
+    expect(y4).toEqual(at('2032-02-29T09:00:00Z'));
+  });
+
+  it('until: returns null once the next occurrence would pass the end', () => {
+    const d = at('2026-09-16T09:00:00Z');
+    const rule = { type: 'daily' as const, until: at('2026-09-17T23:59:59Z') };
+    const next = computeNextOccurrence(d, rule, d)!;
+    expect(next).toEqual(at('2026-09-17T09:00:00Z'));
+    expect(computeNextOccurrence(next, rule, next)).toBeNull();
+    // Rolling over an ignored task never goes past the end either.
+    expect(
+      computeLatestOccurrence(d, rule, at('2026-09-30T00:00:00Z')),
+    ).toEqual(next);
+  });
+
+  it('describes the new shapes', () => {
+    expect(describeRecurrence({ type: 'weekly', byWeekday: [4, 1] })).toBe(
+      'every Mon and Thu',
+    );
+    expect(describeRecurrence({ type: 'weekly', byWeekday: [6, 0] })).toBe(
+      'every Sat and Sun',
+    );
+    expect(describeRecurrence({ type: 'weekly', interval: 2 })).toBe(
+      'every 2 weeks',
+    );
+    expect(
+      describeRecurrence({ type: 'weekly', interval: 2, byWeekday: [1] }),
+    ).toBe('every 2 weeks on Mon');
+    expect(describeRecurrence({ type: 'monthly', lastDayOfMonth: true })).toBe(
+      'on the last day of every month',
+    );
+    expect(describeRecurrence({ type: 'yearly' })).toBe('every year');
+    expect(
+      describeRecurrence(
+        { type: 'daily', until: at('2026-12-31T18:59:00Z') },
+        'Asia/Tashkent',
+      ),
+    ).toBe('every day until 31 Dec 2026');
   });
 });
 

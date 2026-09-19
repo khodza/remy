@@ -1,6 +1,11 @@
 import type { Task, TaskRepository } from '@domain/task/repository';
 import { TaskStatus } from '@domain/task';
 import type { User, UserRepository } from '@domain/user';
+import type {
+  ConversationRepository,
+  ConversationState,
+  UndoRecord,
+} from '@domain/conversation';
 import { DEFAULT_USER_SETTINGS } from '@domain/user';
 
 /**
@@ -27,6 +32,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
       scheduledAt === null ? null : (overrides.snoozedUntil ?? scheduledAt),
     nextAttemptAt: null,
     leadMinutes: null,
+    leadSentFor: null,
     status: TaskStatus.Pending,
     priority: 'normal',
     categoryId: null,
@@ -100,6 +106,58 @@ export function mockUserRepository(
           : {}),
       };
       return user;
+    }),
+  };
+}
+
+/** In-memory conversation store with real behaviour (links, state, one-shot undo). */
+export function mockConversationRepository(): jest.Mocked<ConversationRepository> & {
+  undos: Map<string, UndoRecord & { used: boolean }>;
+} {
+  const links = new Map<string, string[]>();
+  const state: ConversationState = {
+    chatId: 0,
+    pendingQuestion: null,
+    pendingForward: null,
+    lastTaskIds: [],
+  };
+  const undos = new Map<string, UndoRecord & { used: boolean }>();
+  let seq = 0;
+  return {
+    undos,
+    linkMessage: jest.fn(async (link) => {
+      links.set(`${link.chatId}:${link.messageId}`, link.taskIds);
+    }),
+    findLinkedTaskIds: jest.fn(
+      async (chatId: number, messageId: number) =>
+        links.get(`${chatId}:${messageId}`) ?? [],
+    ),
+    getState: jest.fn(async (chatId: number) => ({ ...state, chatId })),
+    setPendingQuestion: jest.fn(async (_chatId, q) => {
+      state.pendingQuestion = q;
+    }),
+    setPendingForward: jest.fn(async (_chatId, f) => {
+      state.pendingForward = f;
+    }),
+    setLastTaskIds: jest.fn(async (_chatId, ids: string[]) => {
+      state.lastTaskIds = ids;
+    }),
+    saveUndo: jest.fn(async (record) => {
+      const id = `undo-${++seq}`;
+      undos.set(id, { ...record, id, used: false });
+      return id;
+    }),
+    takeUndo: jest.fn(async (id: string, chatId: number, now: Date) => {
+      const record = undos.get(id);
+      if (
+        !record ||
+        record.used ||
+        record.chatId !== chatId ||
+        record.expiresAt <= now
+      )
+        return null;
+      record.used = true;
+      return record;
     }),
   };
 }

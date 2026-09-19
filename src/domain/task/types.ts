@@ -10,7 +10,8 @@ export type RecurrenceType =
   | 'weekdays'
   | 'weekly'
   | 'monthly'
-  | 'every_n_days';
+  | 'every_n_days'
+  | 'yearly';
 
 export type Recurrence = {
   type: RecurrenceType;
@@ -18,6 +19,14 @@ export type Recurrence = {
    * Only meaningful when `type === 'every_n_days'`. Integer, >= 1.
    */
   intervalDays?: number;
+  /** Every N weeks / months / years. Default 1. */
+  interval?: number;
+  /** Weekly only: 0 = Sunday … 6 = Saturday ("Mon and Thu" = [1, 4]). */
+  byWeekday?: number[];
+  /** Monthly only: always the last day of the month. */
+  lastDayOfMonth?: boolean;
+  /** The series ends after this instant. */
+  until?: Date;
   /**
    * The occurrence the series was defined from. Never moved by snoozes or
    * by advancing; used to keep "monthly on the 31st" on the 31st after a
@@ -73,12 +82,18 @@ export type Task = {
    * untouched. Cleared when the occurrence is completed or rolled over.
    */
   snoozedUntil: Date | null;
-  /** When the reminder actually fires: snoozedUntil ?? scheduledAt. */
+  /**
+   * When the scheduler next pings: the snooze, else the heads-up
+   * (scheduledAt - leadMinutes) until it was sent, else scheduledAt.
+   * See common/fire-time.ts.
+   */
   nextFireAt: Date | null;
   /** Earliest time the scheduler may retry after a transient send failure. */
   nextAttemptAt: Date | null;
-  /** Heads-up this many minutes before scheduledAt (delivery: Phase 3). */
+  /** Heads-up this many minutes before scheduledAt. */
   leadMinutes: number | null;
+  /** The occurrence (scheduledAt) the heads-up was already sent for. */
+  leadSentFor: Date | null;
   status: TaskStatus;
   priority: Priority;
   categoryId: string | null;
@@ -127,12 +142,15 @@ export type UpdateTaskParams = {
   snoozedUntil?: Date | null;
   nextAttemptAt?: Date | null;
   leadMinutes?: number | null;
+  leadSentFor?: Date | null;
   status?: TaskStatus;
   priority?: Priority;
   categoryId?: string | null;
   completedAt?: Date | null;
   /** Appended to `completions`. */
   pushCompletion?: Completion;
+  /** Keep only the first N completions (undo of a recurring Done). */
+  truncateCompletions?: number;
   lastSentAt?: Date;
   /** Explicitly null clears recurrence; undefined leaves it unchanged. */
   recurrence?: Recurrence | null;

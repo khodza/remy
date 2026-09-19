@@ -49,7 +49,7 @@ import {
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
-import { toTaskWire } from '../mappers/task.mapper';
+import { recurrenceFromWire, toTaskWire } from '../mappers/task.mapper';
 import type { AuthContext } from '../types';
 
 const VOICE_MAX_BYTES = 20 * 1024 * 1024; // 20 MiB
@@ -132,7 +132,13 @@ export class TaskController {
       description: dto.description,
       ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
       scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
-      ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
+      ...(dto.recurrence !== undefined
+        ? {
+            recurrence: dto.recurrence
+              ? recurrenceFromWire(dto.recurrence)
+              : null,
+          }
+        : {}),
       ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
       ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
       ...(dto.leadMinutes !== undefined
@@ -203,7 +209,13 @@ export class TaskController {
               dto.scheduledAt === null ? null : new Date(dto.scheduledAt),
           }
         : {}),
-      ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
+      ...(dto.recurrence !== undefined
+        ? {
+            recurrence: dto.recurrence
+              ? recurrenceFromWire(dto.recurrence)
+              : null,
+          }
+        : {}),
       ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
       ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
       ...(dto.leadMinutes !== undefined

@@ -2,17 +2,18 @@ import { Injectable, Inject } from '@nestjs/common';
 import { Task, TaskRepository, TaskStatus } from '@domain/task/repository';
 import { Domain } from '@common/tokens';
 import { dayBoundsInZone } from '@common/day-bounds';
+import { effectiveDueAt } from '@common/fire-time';
 import { ListTasksInput, ListTasksOutput, TaskWithOverdueFlag } from './types';
 
 const DEFAULT_DONE_LIMIT = 50;
 
 export function withOverdueFlag(task: Task, now: Date): TaskWithOverdueFlag {
+  // A pending heads-up (nextFireAt before the due time) is not "overdue".
+  const dueAt = effectiveDueAt(task);
   return {
     ...task,
     isOverdue:
-      task.status === TaskStatus.Pending &&
-      task.nextFireAt !== null &&
-      task.nextFireAt < now,
+      task.status === TaskStatus.Pending && dueAt !== null && dueAt < now,
   };
 }
 

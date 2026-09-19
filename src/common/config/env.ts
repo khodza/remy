@@ -43,6 +43,8 @@ export const envSchema = z
 
     TELEGRAM_BOT_TOKEN: z.string().min(1, 'TELEGRAM_BOT_TOKEN is required'),
     OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
+    /** Model for the chat intent router. Must support structured outputs. */
+    OPENAI_ASSISTANT_MODEL: z.string().min(1).default('gpt-4o-mini'),
     MONGODB_URI: z.string().min(1).default('mongodb://localhost:27017/remy'),
 
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
@@ -71,6 +73,16 @@ export const envSchema = z
       .refine((tz) => tz === undefined || isValidTimeZone(tz), {
         message: 'must be a valid IANA timezone such as Asia/Tashkent',
       }),
+
+    /**
+     * Public https URL of the Mini App. When set, reminders get an "Open"
+     * button that opens the task in the app.
+     */
+    MINI_APP_URL: z
+      .string()
+      .url()
+      .refine((u) => u.startsWith('https://'), 'must be an https URL')
+      .optional(),
 
     /**
      * Development only: accept the Mini App's mocked initData
@@ -111,7 +123,11 @@ export class EnvValidationError extends Error {
 }
 
 export function loadEnv(source: Record<string, unknown> = process.env): Env {
-  const result = envSchema.safeParse(source);
+  // `KEY=` in a .env file means "not set", not "set to the empty string".
+  const cleaned = Object.fromEntries(
+    Object.entries(source).filter(([, value]) => value !== ''),
+  );
+  const result = envSchema.safeParse(cleaned);
   if (result.success) return result.data;
   const problems = result.error.issues.map((issue) => {
     const key = issue.path.join('.') || '(root)';

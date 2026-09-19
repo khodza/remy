@@ -42,6 +42,17 @@ export class MarkCompleteUsecase {
           now,
           existing.timezone,
         );
+        // The series has an end date and this was its last occurrence.
+        if (nextAt === null) {
+          const finished = await this.taskRepository.update({
+            id: input.taskId,
+            status: TaskStatus.Completed,
+            completedAt: now,
+            snoozedUntil: null,
+            pushCompletion: { at: now, occurrenceAt: existing.scheduledAt },
+          });
+          return { ...finished, alreadyDone: false };
+        }
         // Moving scheduledAt (and clearing the snooze) moves nextFireAt past
         // lastSentAt, which re-arms the scheduler's once-per-fire reminder.
         const updated = await this.taskRepository.update({
