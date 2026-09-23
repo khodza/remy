@@ -108,6 +108,11 @@ export function mockUserRepository(
         return true;
       },
     ),
+    releaseDigest: jest.fn(
+      async (userId: string, kind: DigestKind, localDate: string) => {
+        claimed.delete(`${userId}:${kind}:${localDate}`);
+      },
+    ),
     save: jest.fn(async (_params) => user),
     findByTelegramUserId: jest.fn(async (_telegramUserId: number) => user),
     findById: jest.fn(async (id: string) => (id === user.id ? user : null)),

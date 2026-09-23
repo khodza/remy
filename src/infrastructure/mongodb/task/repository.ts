@@ -284,6 +284,8 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       if (params.nudgeAt !== undefined) set['nudge_at'] = params.nudgeAt;
       if (params.nudgeCount !== undefined)
         set['nudge_count'] = params.nudgeCount;
+      if (params.snoozeCount !== undefined && !params.incrementSnoozeCount)
+        set['snooze_count'] = params.snoozeCount;
       if (params.status !== undefined) set['status'] = params.status;
       if (params.priority !== undefined) set['priority'] = params.priority;
       if (params.categoryId !== undefined)
@@ -316,21 +318,6 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         }
         const pick = <T>(next: T | undefined, current: T): T =>
           next !== undefined ? next : current;
-        set['next_fire_at'] = deriveNextFireAt({
-          scheduledAt: pick(params.scheduledAt, existing.scheduled_at ?? null),
-          snoozedUntil: pick(
-            params.snoozedUntil,
-            existing.snoozed_until ?? null,
-          ),
-          leadMinutes: pick(params.leadMinutes, existing.lead_minutes ?? null),
-          leadSentFor: pick(params.leadSentFor, existing.lead_sent_for ?? null),
-          nudgeAt:
-            params.nudgeAt !== undefined
-              ? params.nudgeAt
-              : timeChanged
-                ? null
-                : (existing.nudge_at ?? null),
-        });
         const scheduledAt = pick(
           params.scheduledAt,
           existing.scheduled_at ?? null,
@@ -339,6 +326,47 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
           params.snoozedUntil,
           existing.snoozed_until ?? null,
         );
+        const leadMinutes = pick(
+          params.leadMinutes,
+          existing.lead_minutes ?? null,
+        );
+        let leadSentFor = pick(
+          params.leadSentFor,
+          existing.lead_sent_for ?? null,
+        );
+        // A task moved to a time whose heads-up slot is already behind us
+        // ("+15m" on a fired reminder with a 30 min lead) must skip the
+        // heads-up: next_fire_at would land at or before last_sent_at and
+        // the claim query would never match the task again.
+        if (
+          timeChanged &&
+          params.leadSentFor === undefined &&
+          scheduledAt !== null &&
+          leadMinutes !== null &&
+          leadMinutes > 0
+        ) {
+          const headsUpAt = scheduledAt.getTime() - leadMinutes * 60_000;
+          const behindUs = Math.max(
+            Date.now(),
+            existing.last_sent_at?.getTime() ?? 0,
+          );
+          if (headsUpAt <= behindUs) {
+            leadSentFor = scheduledAt;
+            set['lead_sent_for'] = scheduledAt;
+          }
+        }
+        set['next_fire_at'] = deriveNextFireAt({
+          scheduledAt,
+          snoozedUntil,
+          leadMinutes,
+          leadSentFor,
+          nudgeAt:
+            params.nudgeAt !== undefined
+              ? params.nudgeAt
+              : timeChanged
+                ? null
+                : (existing.nudge_at ?? null),
+        });
         set['due_at'] =
           scheduledAt === null ? null : (snoozedUntil ?? scheduledAt);
       }

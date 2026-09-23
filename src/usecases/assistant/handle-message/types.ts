@@ -11,6 +11,8 @@ export type HandleMessageInput = {
   replyToMessageId?: number;
   /** Text of a replied-to (non-bot) or forwarded message the user refers to. */
   quoted?: { text: string; from: string | null };
+  /** The text is a tapped answer option of the pending question. */
+  answersPendingQuestion?: boolean;
 };
 
 export type AssistantResult =

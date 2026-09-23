@@ -74,6 +74,23 @@ describe('SendPendingRemindersUsecase', () => {
     jest.restoreAllMocks();
   });
 
+  it('shows the reminder in the zone the user lives in now, not the zone the task was made in', async () => {
+    // Made in Tashkent, owner now in Berlin: the ping reads Berlin time
+    // while the series itself still runs on the task's zone.
+    setup({}, 'Europe/Berlin');
+    queueClaims([
+      makeTask({
+        id: 'task-1',
+        timezone: 'Asia/Tashkent',
+        scheduledAt: new Date('2026-04-16T04:00:00Z'), // 09:00 Tashkent
+      }),
+    ]);
+    await usecase.execute();
+    expect(notificationGateway.sendReminder).toHaveBeenCalledWith(
+      expect.objectContaining({ timezone: 'Europe/Berlin' }),
+    );
+  });
+
   it('sends every claimed task with its timezone and due time, and links the message', async () => {
     const snoozed = makeTask({
       id: 'task-2',
@@ -359,6 +376,18 @@ describe('SendPendingRemindersUsecase', () => {
       expect(taskRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
         taskRepository.claimDueReminder.mock.invocationCallOrder[0]!,
       );
+    });
+
+    it('keeps a snooze that is still ahead: "tomorrow 09:00" on a daily 08:00 task fires at 09:00', async () => {
+      taskRepository.findOverdueRecurring.mockResolvedValue([
+        makeTask({
+          scheduledAt: new Date('2026-04-15T08:00:00Z'),
+          snoozedUntil: new Date('2026-04-17T09:00:00Z'),
+          recurrence: { type: 'daily' },
+        }),
+      ]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalled();
     });
 
     it('rolls over in the task timezone', async () => {

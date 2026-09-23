@@ -61,6 +61,35 @@ describe('DelayTaskUsecase', () => {
     });
   });
 
+  it('counts from the due time, not from a pending nudge or heads-up', async () => {
+    // Fired at 12:00 a minute ago; the next ping is the 12:30 nudge.
+    const nudging = makeTask({
+      scheduledAt: new Date('2026-04-16T11:59:00Z'),
+      nextFireAt: new Date('2026-04-16T12:30:00Z'),
+    });
+    taskRepository.findById.mockResolvedValue(nudging);
+    taskRepository.update.mockResolvedValue(nudging);
+    await usecase.execute({ taskId: 'task-1', delayMinutes: 15 });
+    expect(taskRepository.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        scheduledAt: new Date('2026-04-16T12:15:00Z'),
+      }),
+    );
+
+    // Due 15:00 with the heads-up pending at 14:00: +15m is 15:15, not 14:15.
+    const headsUp = makeTask({
+      scheduledAt: new Date('2026-04-16T15:00:00Z'),
+      nextFireAt: new Date('2026-04-16T14:00:00Z'),
+    });
+    taskRepository.findById.mockResolvedValue(headsUp);
+    await usecase.execute({ taskId: 'task-1', delayMinutes: 15 });
+    expect(taskRepository.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        scheduledAt: new Date('2026-04-16T15:15:00Z'),
+      }),
+    );
+  });
+
   it('snoozes only the current occurrence of a recurring task', async () => {
     const daily = makeTask({
       scheduledAt: new Date('2026-04-16T09:00:00Z'),

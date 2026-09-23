@@ -133,6 +133,23 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
       expect(later?.previousLastSentAt).toEqual(now);
     });
 
+    it('a fired task with a heads-up that is pushed a little later still fires again', async () => {
+      // Due 10:00 with a 30 min lead; heads-up and reminder both went out.
+      const task = await repo.create(params({ leadMinutes: 30 }));
+      await repo.update({ id: task.id, leadSentFor: past });
+      await repo.claimDueReminder(now);
+
+      // "+15m": the new heads-up slot (12:00) is not after the last send.
+      const moved = new Date('2026-04-16T12:30:00Z');
+      const updated = await repo.update({ id: task.id, scheduledAt: moved });
+      expect(updated.nextFireAt).toEqual(moved);
+
+      const again = await repo.claimDueReminder(
+        new Date('2026-04-16T12:30:30Z'),
+      );
+      expect(again?.task.id).toBe(task.id);
+    });
+
     it('release restores the stamp and holds the task until nextAttemptAt', async () => {
       const task = await repo.create(params());
       const claim = await repo.claimDueReminder(now);

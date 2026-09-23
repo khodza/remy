@@ -123,6 +123,19 @@ export class UserRepositoryImpl implements UserRepository {
     return result.modifiedCount === 1;
   }
 
+  public async releaseDigest(
+    userId: string,
+    kind: DigestKind,
+    localDate: string,
+  ): Promise<void> {
+    const field = DIGEST_FIELD[kind];
+    await this.model.updateOne(
+      { _id: userId, [field]: localDate },
+      { $set: { [field]: null } },
+      { timestamps: false },
+    );
+  }
+
   private documentToEntity(document: UserDocument): User {
     return {
       id: document._id.toHexString(),

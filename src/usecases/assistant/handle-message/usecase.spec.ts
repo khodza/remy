@@ -205,6 +205,7 @@ describe('HandleMessageUsecase', () => {
       expect(seen().pendingQuestion).toEqual({
         originalText: 'call mom at 5',
         question: 'Morning or evening?',
+        answered: [],
       });
 
       interpreter.interpret.mockClear();
@@ -474,6 +475,53 @@ describe('HandleMessageUsecase', () => {
     interpretAs({ intent: 'chat', reply: 'ok' });
     await usecase.execute(input({ text: '17:00' }));
     expect((await conversations.getState(42)).pendingQuestion).toBeNull();
+  });
+
+  it('a second question keeps the first answer, so nothing said is lost', async () => {
+    interpretAs({ intent: 'unclear', question: 'AM or PM?', options: [] });
+    await usecase.execute(input({ text: 'brother at 5 today' }));
+    interpretAs({ intent: 'unclear', question: 'Which day?', options: [] });
+    await usecase.execute(input({ text: '17:00' }));
+
+    interpretAs({ intent: 'chat', reply: 'ok' });
+    await usecase.execute(input({ text: 'tomorrow' }));
+    const last = interpreter.interpret.mock.calls.at(-1)![0];
+    expect(last.pendingQuestion).toEqual({
+      originalText: 'brother at 5 today',
+      question: 'Which day?',
+      answered: [{ question: 'AM or PM?', answer: '17:00' }],
+    });
+  });
+
+  it('stops asking after three rounds instead of going in circles', async () => {
+    interpretAs({ intent: 'unclear', question: 'What?', options: ['a'] });
+    const results = [];
+    for (const text of ['at 5', 'a', 'a', 'a'])
+      results.push(await usecase.execute(input({ text })));
+
+    expect(results.map((r) => r.kind)).toEqual([
+      'question',
+      'question',
+      'question',
+      'chat',
+    ]);
+    expect((await conversations.getState(42)).pendingQuestion).toBeNull();
+  });
+
+  it('a tapped answer still belongs to its question after the typing window', async () => {
+    await conversations.setPendingQuestion(42, {
+      originalText: 'call mom at 5',
+      question: 'Morning or evening?',
+      options: ['05:00', '17:00'],
+      askedAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    interpretAs({ intent: 'chat', reply: 'ok' });
+    await usecase.execute(
+      input({ text: '17:00', answersPendingQuestion: true }),
+    );
+    expect(seen().pendingQuestion).toMatchObject({
+      originalText: 'call mom at 5',
+    });
   });
 
   it('a target the model invented (not in the list) becomes a question, not an action', async () => {

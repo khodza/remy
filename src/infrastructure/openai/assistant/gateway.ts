@@ -31,7 +31,7 @@ export class InterpreterGatewayImpl implements InterpreterGateway {
         temperature: 0,
         messages: [
           { role: 'system', content: buildAssistantPrompt(input) },
-          { role: 'user', content: input.text },
+          ...exchangeMessages(input),
         ],
         // Strict structured outputs: the reply always matches the schema, so
         // there is no "model returned prose" failure mode.
@@ -53,7 +53,12 @@ export class InterpreterGatewayImpl implements InterpreterGateway {
       const interpretation = interpretAssistantOutput(
         JSON.parse(message.content),
         {
-          text: input.text,
+          // While a question is open the request is the whole exchange: the
+          // task may be named in the first message and only a time in this one.
+          text: exchangeMessages(input)
+            .filter((m) => m.role === 'user')
+            .map((m) => m.content)
+            .join('\n'),
           contextTaskIds: [...input.replyToTaskIds, ...input.lastTaskIds],
           timezone: input.timezone,
           now: input.now,
@@ -72,4 +77,25 @@ export class InterpreterGatewayImpl implements InterpreterGateway {
       );
     }
   }
+}
+
+type ExchangeMessage = { role: 'user' | 'assistant'; content: string };
+
+/**
+ * The message as the model sees it. An answer to Remy's question is sent
+ * with the exchange before it, as real chat turns: given only "17:00" the
+ * model treats it as a new request ("a time with no task") and asks again.
+ */
+function exchangeMessages(input: InterpreterInput): ExchangeMessage[] {
+  const pending = input.pendingQuestion;
+  if (!pending) return [{ role: 'user', content: input.text }];
+  return [
+    { role: 'user', content: pending.originalText },
+    ...pending.answered.flatMap((a): ExchangeMessage[] => [
+      { role: 'assistant', content: a.question },
+      { role: 'user', content: a.answer },
+    ]),
+    { role: 'assistant', content: pending.question },
+    { role: 'user', content: input.text },
+  ];
 }

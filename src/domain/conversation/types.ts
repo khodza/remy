@@ -14,7 +14,14 @@ export type PendingQuestion = {
   question: string;
   options: string[];
   askedAt: Date;
+  /**
+   * Earlier rounds of the same exchange. Without them a second question
+   * forgets the first answer ("17:00") and the task is saved without it.
+   */
+  answered?: AnsweredQuestion[];
 };
+
+export type AnsweredQuestion = { question: string; answer: string };
 
 /** A forwarded message waiting for the user to say when to be reminded. */
 export type PendingForward = {
@@ -43,6 +50,13 @@ export type TaskSnapshot = {
   completedAt: Date | null;
   recurrence: Recurrence | null;
   completionsCount: number;
+  /**
+   * Pending "still open" nudges and the snooze tally. Optional: records
+   * saved before these existed restore without them.
+   */
+  nudgeAt?: Date | null;
+  nudgeCount?: number;
+  snoozeCount?: number;
 };
 
 export type UndoRecord = {

@@ -33,9 +33,13 @@ export function presentAssistantResult(
 
     case 'question': {
       const keyboard = new InlineKeyboard();
-      result.options.forEach((option, i) =>
-        keyboard.text(option.slice(0, 40), `ans:${i}`),
-      );
+      // Short answers ("05:00", "17:00") sit side by side; long ones get a
+      // row each, or Telegram squeezes them into unreadable "Send noti…".
+      const stacked = result.options.some((o) => o.length > 14);
+      result.options.forEach((option, i) => {
+        if (stacked && i > 0) keyboard.row();
+        keyboard.text(option.slice(0, 40), `ans:${i}`);
+      });
       return {
         html: `🤔 ${escapeHtml(result.question)}`,
         ...(result.options.length > 0 ? { keyboard } : {}),
@@ -61,10 +65,10 @@ export function presentAssistantResult(
 
     case 'completed': {
       const lines = result.tasks.map((t) => {
-        const repeat = describeRecurrence(t.recurrence, t.timezone);
+        const repeat = describeRecurrence(t.recurrence, timezone);
         const next =
           repeat && t.scheduledAt && t.status === 'pending'
-            ? ` <i>(next: ${formatForUserShort(t.scheduledAt, t.timezone)})</i>`
+            ? ` <i>(next: ${formatForUserShort(t.scheduledAt, timezone)})</i>`
             : '';
         return `✅ ${escapeHtml(t.description)}${next}`;
       });
@@ -90,7 +94,7 @@ export function presentAssistantResult(
         const due = effectiveDueAt(t);
         const occurrenceOnly =
           t.recurrence && t.snoozedUntil ? ' <i>(this time only)</i>' : '';
-        return `⏭ ${escapeHtml(t.description)} → <b>${due ? formatForUserShort(due, t.timezone) : '—'}</b>${occurrenceOnly}`;
+        return `⏭ ${escapeHtml(t.description)} → <b>${due ? formatForUserShort(due, timezone) : '—'}</b>${occurrenceOnly}`;
       });
       for (const t of result.skipped) {
         lines.push(

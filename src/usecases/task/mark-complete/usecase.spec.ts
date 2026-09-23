@@ -118,6 +118,44 @@ describe('MarkCompleteUsecase', () => {
     expect(taskRepository.update).not.toHaveBeenCalled();
   });
 
+  it('Done on the heads-up (before the time) counts for that occurrence; a stale one does not', async () => {
+    const tonight = makeTask({
+      scheduledAt: new Date('2026-04-16T16:00:00Z'), // later today
+      recurrence: { type: 'daily' },
+    });
+    taskRepository.findById.mockResolvedValue(tonight);
+    taskRepository.update.mockResolvedValue(tonight);
+
+    const result = await usecase.execute({
+      taskId: 'task-1',
+      occurrenceAt: new Date('2026-04-16T16:00:00Z'),
+    });
+    expect(result.alreadyDone).toBe(false);
+    expect(taskRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduledAt: new Date('2026-04-17T16:00:00Z'),
+        pushCompletion: expect.objectContaining({
+          occurrenceAt: new Date('2026-04-16T16:00:00Z'),
+        }),
+      }),
+    );
+
+    // The same button tapped again: the series has moved on, nothing happens.
+    taskRepository.update.mockClear();
+    taskRepository.findById.mockResolvedValue(
+      makeTask({
+        scheduledAt: new Date('2026-04-17T16:00:00Z'),
+        recurrence: { type: 'daily' },
+      }),
+    );
+    const again = await usecase.execute({
+      taskId: 'task-1',
+      occurrenceAt: new Date('2026-04-16T16:00:00Z'),
+    });
+    expect(again.alreadyDone).toBe(true);
+    expect(taskRepository.update).not.toHaveBeenCalled();
+  });
+
   it('advances past missed cycles so the next fire is in the future', async () => {
     const weekly = makeTask({
       scheduledAt: new Date('2026-04-01T09:00:00Z'),

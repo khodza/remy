@@ -74,6 +74,10 @@ describe('UndoActionUsecase', () => {
       completedAt: null,
       recurrence: { type: 'daily' },
       truncateCompletions: 1,
+      // A restored time would otherwise reset these (no more nudges).
+      nudgeAt: before.nudgeAt,
+      nudgeCount: before.nudgeCount,
+      snoozeCount: before.snoozeCount,
     });
   });
 

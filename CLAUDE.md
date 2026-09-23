@@ -82,7 +82,10 @@ The domain layer must not import the contract; the HTTP layer maps.
 - Bot messages use `parse_mode: 'HTML'` and `escapeHtml()` from
   `infrastructure/bot/html.ts` for any user-provided text. Never Markdown.
 - Every time shown to the user goes through `formatForUser` /
-  `formatForUserShort` (`common/format-date.ts`) with the task's `timezone`.
+  `formatForUserShort` (`common/format-date.ts`) with the **user's current
+  zone** (`resolveTimezone(user)` / `zoneOf(user)`), never `task.timezone`:
+  the owner decided (23 Sep 2026) that bot and Mini App show everything in
+  the zone they live in now. `task.timezone` is for recurrence math only.
   Never call plain date-fns `format()` for user-facing text (it formats in
   the server's zone).
 - Task model v2: `description` is the title, `notes` the body; a task with
@@ -114,6 +117,15 @@ The domain layer must not import the contract; the HTTP layer maps.
   do clock arithmetic (`in_minutes`), never act on an ungrounded target. After
   changing the prompt or schema run `npm run assistant:try` (real OpenAI call;
   `ASSISTANT_DEBUG=1` prints the raw model JSON).
+- Clarifying questions: a pending question keeps the whole exchange
+  (`originalText` + `answered[]`), and the gateway sends it to the model as
+  real chat turns (`exchangeMessages`). Never send a bare answer ("17:00") on
+  its own: the model reads it as a new request and the task loses its time.
+  At most `MAX_QUESTION_ROUNDS` questions per request; a tapped answer
+  (`answersPendingQuestion`) ignores the typing TTL. Guards in
+  `interpret-output.ts`: a create that drops a clock time the user named
+  becomes a question, a named weekday wins over the model's date, the prompt
+  carries a 14-day calendar.
 - Conversation memory (`domain/conversation`): bot message → task links (so
   replies work), one pending question, one pending forward, last touched
   tasks, and Undo records (taken atomically, once). Record the undo BEFORE

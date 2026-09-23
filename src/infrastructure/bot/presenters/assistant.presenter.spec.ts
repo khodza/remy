@@ -82,6 +82,58 @@ describe('presentAssistantResult', () => {
     expect(reply.html).toContain('✅ Dentist');
   });
 
+  it('every time is shown in the profile zone, whatever zone the task was made in', () => {
+    const berlinTask = makeTask({
+      description: 'Standup',
+      scheduledAt: new Date('2026-09-21T07:00:00Z'), // 09:00 Berlin, 12:00 Tashkent
+      timezone: 'Europe/Berlin',
+      recurrence: { type: 'daily' },
+    });
+    const completed = presentAssistantResult(
+      { kind: 'completed', undoId: 'u', tasks: [berlinTask] },
+      tz,
+      now,
+    );
+    expect(completed.html).toContain('(next: Mon 21 Sep, 12:00)');
+    const moved = presentAssistantResult(
+      { kind: 'rescheduled', undoId: 'u', tasks: [berlinTask], skipped: [] },
+      tz,
+      now,
+    );
+    expect(moved.html).toContain('Mon 21 Sep, 12:00');
+
+    // Across the DST switch the profile zone's offset changes, the task
+    // zone's does not: 09:00 Tashkent is 06:00 Berlin in summer and 05:00
+    // in winter. Both read correctly in Berlin.
+    const tashkentDaily = (at: string) =>
+      makeTask({
+        description: 'Pills',
+        scheduledAt: new Date(at),
+        timezone: 'Asia/Tashkent',
+        recurrence: { type: 'daily' },
+      });
+    const summer = presentAssistantResult(
+      {
+        kind: 'completed',
+        undoId: 'u',
+        tasks: [tashkentDaily('2026-10-24T04:00:00Z')],
+      },
+      'Europe/Berlin',
+      now,
+    );
+    const winter = presentAssistantResult(
+      {
+        kind: 'completed',
+        undoId: 'u',
+        tasks: [tashkentDaily('2026-10-26T04:00:00Z')],
+      },
+      'Europe/Berlin',
+      now,
+    );
+    expect(summer.html).toContain('Sat 24 Oct, 06:00');
+    expect(winter.html).toContain('Mon 26 Oct, 05:00');
+  });
+
   it('rescheduled: new time, "this time only" for a snoozed series, skipped ones explained', () => {
     const reply = presentAssistantResult(
       {
@@ -164,6 +216,18 @@ describe('presentAssistantResult', () => {
     expect(buttons(q)).toEqual([
       ['05:00', 'ans:0'],
       ['17:00', 'ans:1'],
+    ]);
+    const long = presentAssistantResult(
+      {
+        kind: 'question',
+        question: 'Which task do you mean?',
+        options: ['Send standup notes to Alisher', 'Dentist'],
+      },
+      tz,
+      now,
+    );
+    expect(long.keyboard?.inline_keyboard.map((row) => row.length)).toEqual([
+      1, 1,
     ]);
     expect(
       presentAssistantResult({ kind: 'chat', reply: '1 < 2' }, tz, now).html,

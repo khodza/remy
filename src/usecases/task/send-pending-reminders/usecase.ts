@@ -107,7 +107,9 @@ export class SendPendingRemindersUsecase {
           description: task.description,
           kind: ping,
           dueAt,
-          timezone: task.timezone,
+          // Shown in the zone the user lives in now, not the one the task
+          // was made in; the series itself keeps running on task.timezone.
+          timezone: owner.timezone,
           notes: task.notes,
           recurrence: task.recurrence ?? null,
           ...(ping === 'nudge' ? { nudgeNumber: task.nudgeCount + 1 } : {}),
@@ -225,13 +227,16 @@ export class SendPendingRemindersUsecase {
    * ignore it, move it onto its latest occurrence once the next cycle has
    * arrived; otherwise it would stay on the missed cycle (already reminded)
    * and never remind again. A snooze that belonged to the missed occurrence
-   * is dropped with it.
+   * is dropped with it; one that is still ahead ("tomorrow 09:00" on a daily
+   * 08:00 task) is a promise to the user and holds the task until it fires.
    */
   private async rollOverMissedOccurrences(now: Date): Promise<void> {
     try {
       const tasks = await this.taskRepository.findOverdueRecurring(now);
       for (const task of tasks) {
         if (!task.recurrence || task.scheduledAt === null) continue;
+        if (task.snoozedUntil && task.snoozedUntil.getTime() > now.getTime())
+          continue;
         const latest = computeLatestOccurrence(
           task.scheduledAt,
           task.recurrence,

@@ -41,12 +41,13 @@ function repeatLine(recurrence: Recurrence | null | undefined): string {
 
 /** "⏰ Thu 16 Apr, 11:00", "(snoozed until …)" when delayed, "📥 no date" for todos. */
 function whenLine(
-  task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'timezone'>,
+  task: Pick<Task, 'scheduledAt' | 'snoozedUntil'>,
+  timezone: string,
 ): string {
   if (task.scheduledAt === null) return '📥 no date';
-  const base = `⏰ ${formatForUserShort(task.scheduledAt, task.timezone)}`;
+  const base = `⏰ ${formatForUserShort(task.scheduledAt, timezone)}`;
   return task.snoozedUntil
-    ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, task.timezone)})`
+    ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, timezone)})`
     : base;
 }
 
@@ -156,6 +157,7 @@ export class CommandHandler {
       const user = await this.ensureUserUsecase.execute(
         toEnsureUserInput(ctx.from),
       );
+      const timezone = resolveTimezone(user);
 
       // Get tasks
       const result = await this.listTasksUsecase.execute({
@@ -168,36 +170,44 @@ export class CommandHandler {
         return;
       }
 
-      const tasks = result.tasks;
-      const tasksWithButtons = tasks.slice(-3);
-      const tasksWithoutButtons = tasks.slice(0, -3);
+      // Soonest (and overdue) first, todos last: Mongo sorts a null due time
+      // before every date. The buttons go on what needs attention now, not
+      // on the three tasks furthest away.
+      const tasks = [
+        ...result.tasks.filter((t) => t.scheduledAt !== null),
+        ...result.tasks.filter((t) => t.scheduledAt === null),
+      ];
+      const tasksWithButtons = tasks.slice(0, 3);
+      const tasksWithoutButtons = tasks.slice(3);
 
-      // Show older tasks as plain text
+      await ctx.reply(`📋 <b>Your Tasks:</b>`, { parse_mode: 'HTML' });
+
+      for (const task of tasksWithButtons) {
+        const emoji = task.isOverdue ? '🔴' : '🟢';
+        const status = task.isOverdue ? ' (Overdue)' : '';
+        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n${whenLine(task, timezone)}${status}${repeatLine(task.recurrence).replace('\n   ', '\n')}`;
+
+        const keyboard = new InlineKeyboard().text(
+          '✅ Done',
+          `complete:${task.id}`,
+        );
+        // A todo has no time to delay from.
+        if (task.scheduledAt !== null)
+          keyboard.text('⏰ Delay', `delay:${task.id}:15`);
+        keyboard.text('🗑️ Delete', `delete:${task.id}`);
+
+        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+      }
+
       if (tasksWithoutButtons.length > 0) {
-        let message = `📋 <b>Your Tasks:</b>\n\n`;
+        let message = `<b>Later:</b>\n\n`;
         for (const task of tasksWithoutButtons) {
           const emoji = task.isOverdue ? '🔴' : '🟢';
           const status = task.isOverdue ? '(Overdue)' : '';
           message += `${emoji} <b>${escapeHtml(task.description)}</b>\n`;
-          message += `   ${whenLine(task)} ${status}${repeatLine(task.recurrence)}\n\n`;
+          message += `   ${whenLine(task, timezone)} ${status}${repeatLine(task.recurrence)}\n\n`;
         }
         await ctx.reply(message, { parse_mode: 'HTML' });
-      } else {
-        await ctx.reply(`📋 <b>Your Tasks:</b>`, { parse_mode: 'HTML' });
-      }
-
-      // Show last 3 tasks with action buttons
-      for (const task of tasksWithButtons) {
-        const emoji = task.isOverdue ? '🔴' : '🟢';
-        const status = task.isOverdue ? ' (Overdue)' : '';
-        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n${whenLine(task)}${status}${repeatLine(task.recurrence).replace('\n   ', '\n')}`;
-
-        const keyboard = new InlineKeyboard()
-          .text('✅ Done', `complete:${task.id}`)
-          .text('⏰ Delay', `delay:${task.id}:15`)
-          .text('🗑️ Delete', `delete:${task.id}`);
-
-        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
       }
     } catch (error) {
       console.error('Failed to handle list command:', error);

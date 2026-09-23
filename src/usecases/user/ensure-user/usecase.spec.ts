@@ -32,6 +32,7 @@ describe('EnsureUserUsecase', () => {
       update: jest.fn(),
       listAll: jest.fn(),
       claimDigest: jest.fn(),
+      releaseDigest: jest.fn(),
       findByCalendarToken: jest.fn(),
     };
 

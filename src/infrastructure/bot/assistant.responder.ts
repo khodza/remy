@@ -13,7 +13,7 @@ import { resolveTimezone } from './user-input';
 
 export type RespondOptions = Pick<
   HandleMessageInput,
-  'source' | 'replyToMessageId' | 'quoted'
+  'source' | 'replyToMessageId' | 'quoted' | 'answersPendingQuestion'
 > & {
   /** Shown above the answer for voice notes, so a mis-hearing is visible. */
   transcript?: string;
@@ -50,6 +50,9 @@ export class AssistantResponder {
           ? { replyToMessageId: options.replyToMessageId }
           : {}),
         ...(options.quoted ? { quoted: options.quoted } : {}),
+        ...(options.answersPendingQuestion
+          ? { answersPendingQuestion: true }
+          : {}),
       });
     } catch (error) {
       console.error('Assistant failed:', error);

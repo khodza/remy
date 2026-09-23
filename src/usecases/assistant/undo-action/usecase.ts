@@ -45,6 +45,12 @@ export class UndoActionUsecase {
         completedAt: s.completedAt,
         recurrence: s.recurrence,
         truncateCompletions: s.completionsCount,
+        // Putting the old time back counts as a time change, which clears
+        // the nudges: an undone "+1h" on a fired reminder would otherwise
+        // sit overdue and never ping again.
+        ...(s.nudgeAt !== undefined ? { nudgeAt: s.nudgeAt } : {}),
+        ...(s.nudgeCount !== undefined ? { nudgeCount: s.nudgeCount } : {}),
+        ...(s.snoozeCount !== undefined ? { snoozeCount: s.snoozeCount } : {}),
       });
     }
     return { undone: true, label: record.label };

@@ -157,6 +157,8 @@ export type UpdateTaskParams = {
   nudgeCount?: number;
   /** +1 on snoozeCount. */
   incrementSnoozeCount?: boolean;
+  /** Sets the tally outright (Undo puts the old value back). */
+  snoozeCount?: number;
   status?: TaskStatus;
   priority?: Priority;
   categoryId?: string | null;

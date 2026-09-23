@@ -1,4 +1,5 @@
-import { formatInTimeZone } from 'date-fns-tz';
+import { addDays } from 'date-fns';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import type { InterpreterInput } from '@domain/assistant';
 
 const MAX_CANDIDATES = 40;
@@ -13,6 +14,12 @@ export function buildAssistantPrompt(input: InterpreterInput): string {
   const nowLocal = formatInTimeZone(now, timezone, "yyyy-MM-dd'T'HH:mm:ss");
   const weekday = formatInTimeZone(now, timezone, 'EEEE');
   const candidates = candidatesForPrompt(input);
+  // Models miscount weekdays ("saturday" asked on a Sunday came back as a
+  // Thursday); a calendar to read from is reliable where arithmetic is not.
+  const noon = fromZonedTime(`${nowLocal.slice(0, 10)}T12:00:00`, timezone);
+  const calendar = Array.from({ length: 14 }, (_, i) =>
+    formatInTimeZone(addDays(noon, i + 1), timezone, 'EEE yyyy-MM-dd'),
+  ).join(', ');
 
   const mark = (id: string): string => {
     const tags: string[] = [];
@@ -35,7 +42,7 @@ export function buildAssistantPrompt(input: InterpreterInput): string {
   const context: string[] = [];
   if (input.pendingQuestion) {
     context.push(
-      `You previously asked the user: "${input.pendingQuestion.question}" about their message "${input.pendingQuestion.originalText}". The new message is most likely the answer: combine both and act. Do not ask the same question again.`,
+      `You are in the middle of clarifying the user's FIRST message ("${input.pendingQuestion.originalText.slice(0, 500)}"). The chat below holds your questions and their answers; the last message answers "${input.pendingQuestion.question}". Act on the FIRST message with every answer applied: its intent, title, date words and everything else stay as they were, the answers only fill the gaps (first message "call mom at 5", answer "17:00" → create "Call mom" at 17:00). An answer that is only a time is NOT a new request: rule 5b does not apply. If the answered time has already passed today, use the next day. Never ask something that was already answered, and ask again only if you truly cannot act. If the last message is clearly a new, unrelated request, handle that instead.`,
     );
   }
   if (input.quoted) {
@@ -48,6 +55,7 @@ export function buildAssistantPrompt(input: InterpreterInput): string {
 
 NOW
 - Local date and time: ${nowLocal} (${weekday}); timezone ${timezone}.
+- The next 14 days: ${calendar}. Read weekday names ("saturday", "next monday", "в пятницу") off this list; never count days yourself. Today's weekday name means today if the time is still ahead, else the one in 7 days.
 - Every time you output is LOCAL wall-clock "YYYY-MM-DDTHH:mm:ss" in that timezone. Never add "Z" or an offset.
 
 THE USER'S OPEN TASKS (refer to them by number in "targets")
@@ -68,6 +76,9 @@ INTENTS — choose one
 - edit: rename a task or change its notes. "rename X to Y" / "call it Y" → targets = [X], new_title = "Y" (always fill new_title with the new name). "add a note to X: Z" → new_notes = "Z". Time changes are reschedule, not edit.
 - chat: greetings, thanks, small talk, questions about what you can do. Put a short friendly answer in "reply" (1–2 sentences, plain text, in the user's language).
 - unclear: you cannot act safely. Ask ONE short question in "question" and offer up to 4 short tap-able answers in "options" (e.g. ["05:00", "17:00"]). Use this when a target is ambiguous between several tasks, when a bare hour like "at 5" could be morning or evening and both are plausible, or when the message is not understandable. Do not use it when a sensible default exists.
+
+LANGUAGE
+"reply", "question" and "options" are written in the language the user wrote their message in: an English message gets English, a Russian one Russian, an Uzbek one Uzbek. The timezone and the task list say nothing about the language. Clock options stay as "05:00" / "17:00".
 
 TIME RULES
 1. Durations from now ("in 20 minutes", "in 2 hours", "after 3 days", "через час"): do NOT compute a clock time. Put the duration in in_minutes (2 hours → 120) and leave due_local null. The server adds it to the current time.

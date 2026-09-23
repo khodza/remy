@@ -243,6 +243,105 @@ describe('interpretAssistantOutput', () => {
       });
     });
 
+    it('a time that passed earlier today offers the same time tomorrow as a tap', () => {
+      const r = interpretAssistantOutput(
+        reply({
+          intent: 'create',
+          tasks: [draft({ title: 'flight', due_local: '2026-09-18T12:00:00' })],
+        }),
+        ctx,
+      );
+      expect(r).toMatchObject({
+        intent: 'unclear',
+        options: ['Tomorrow 12:00'],
+      });
+    });
+
+    it('never files a reminder in the Inbox when the user named a clock time', () => {
+      // Seen live: "…to my brother at 5 today" → "17:00" → saved with no date.
+      const dropped = reply({
+        intent: 'create',
+        tasks: [draft({ title: 'send notification to brother' })],
+      });
+      for (const text of [
+        'I should send notification to my brother at 5 today\n17:00',
+        'call mom 5pm',
+        'позвонить брату в 5',
+      ]) {
+        expect(
+          interpretAssistantOutput(dropped, { ...ctx, text }),
+        ).toMatchObject({
+          intent: 'unclear',
+          question: expect.stringContaining('Send notification to brother'),
+        });
+      }
+      // No clock time, or an explicit "no date": an Inbox todo is right.
+      for (const text of [
+        'buy 5 apples',
+        'call mom at 5? no date, just save',
+      ]) {
+        expect(
+          interpretAssistantOutput(dropped, { ...ctx, text }),
+        ).toMatchObject({ intent: 'create' });
+      }
+    });
+
+    it('a named weekday wins over a miscounted date, and a lead copied into in_minutes is ignored', () => {
+      // Seen live on Sun 20 Sep: "flight saturday 6pm, 3 hours before".
+      const r = interpretAssistantOutput(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'flight',
+              due_local: '2026-09-24T18:00:00',
+              in_minutes: 180,
+              lead_minutes: 180,
+            }),
+          ],
+        }),
+        {
+          ...ctx,
+          text: 'remind me about the flight saturday 6pm, 3 hours before',
+        },
+      );
+      if (r.intent !== 'create') throw new Error('expected create');
+      // Sat 26 Sep 18:00 Tashkent
+      expect(r.tasks[0]?.dueAt).toEqual(new Date('2026-09-26T13:00:00Z'));
+      expect(r.tasks[0]?.leadMinutes).toBe(180);
+    });
+
+    it('leaves the date alone when the weekday already matches or none is named', () => {
+      for (const text of ['gym on friday morning', 'gym', 'в пятницу зал']) {
+        const r = interpretAssistantOutput(
+          reply({
+            intent: 'create',
+            tasks: [draft({ title: 'gym', due_local: '2026-09-25T09:00:00' })],
+          }),
+          { ...ctx, text },
+        );
+        if (r.intent !== 'create') throw new Error('expected create');
+        expect(r.tasks[0]?.dueAt).toEqual(new Date('2026-09-25T04:00:00Z'));
+      }
+    });
+
+    it('a title that only says "remind me" becomes a question', () => {
+      expect(
+        interpretAssistantOutput(
+          reply({
+            intent: 'create',
+            tasks: [
+              draft({ title: 'Remind me', due_local: '2026-09-18T17:00:00' }),
+            ],
+          }),
+          { ...ctx, text: 'remind me at 5' },
+        ),
+      ).toMatchObject({
+        intent: 'unclear',
+        question: 'What should I remind you about?',
+      });
+    });
+
     it('accepts new values restated inside tasks[] for reschedule and edit', () => {
       expect(
         interpretAssistantOutput(
@@ -536,6 +635,7 @@ describe('buildAssistantPrompt', () => {
     pendingQuestion: {
       originalText: 'call mom at 5',
       question: 'Morning or evening?',
+      answered: [],
     },
     quoted: { text: 'Your slot on Thu is confirmed', from: 'Clinic' },
   };
@@ -553,5 +653,19 @@ describe('buildAssistantPrompt', () => {
     expect(prompt).toContain('Work, Health');
     expect(prompt).toContain('Morning or evening?');
     expect(prompt).toContain('from Clinic');
+  });
+
+  it('gives the model a calendar so it never counts weekdays itself', () => {
+    const prompt = buildAssistantPrompt(input);
+    expect(prompt).toContain(
+      'The next 14 days: Sat 2026-09-19, Sun 2026-09-20',
+    );
+    expect(prompt).toContain('Fri 2026-10-02.');
+  });
+
+  it('writes questions in the language of the message', () => {
+    expect(buildAssistantPrompt(input)).toContain(
+      'an English message gets English',
+    );
   });
 });

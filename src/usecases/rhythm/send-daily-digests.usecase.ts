@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { formatInTimeZone } from 'date-fns-tz';
 import type { ConversationRepository } from '@domain/conversation';
 import type { NotificationGateway } from '@domain/notification/gateway';
+import { NotificationFailedError } from '@domain/notification/errors';
 import type { DigestKind } from '@domain/rhythm';
 import type { User, UserRepository } from '@domain/user';
 import { Domain } from '@common/tokens';
@@ -65,13 +66,34 @@ export class SendDailyDigestsUsecase {
     const timezone = zoneOf(user);
     // Claim first: two processes (or a slow run overlapping the next) can
     // never both send today's brief.
-    const claimed = await this.users.claimDigest(
-      user.id,
-      kind,
-      localDate(now, timezone),
-    );
+    const day = localDate(now, timezone);
+    const claimed = await this.users.claimDigest(user.id, kind, day);
     if (!claimed) return false;
 
+    try {
+      return await this.buildAndSend(user, kind, timezone, now);
+    } catch (error) {
+      // A claim kept after a Telegram hiccup would cost the user the whole
+      // day's brief; give it back unless retrying cannot help (blocked bot).
+      const permanent =
+        error instanceof NotificationFailedError && error.permanent;
+      if (!permanent) {
+        await this.users
+          .releaseDigest(user.id, kind, day)
+          .catch((e: unknown) =>
+            console.error(`Failed to release the ${kind} claim:`, e),
+          );
+      }
+      throw error;
+    }
+  }
+
+  private async buildAndSend(
+    user: User,
+    kind: DigestKind,
+    timezone: string,
+    now: Date,
+  ): Promise<boolean> {
     const chatId = user.telegramUserId;
     if (kind === 'brief') {
       const brief = await this.builder.buildBrief(user, timezone, now, true);

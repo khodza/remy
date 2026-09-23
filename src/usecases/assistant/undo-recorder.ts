@@ -20,6 +20,9 @@ export function snapshotOf(task: Task): TaskSnapshot {
     completedAt: task.completedAt,
     recurrence: task.recurrence,
     completionsCount: task.completions.length,
+    nudgeAt: task.nudgeAt,
+    nudgeCount: task.nudgeCount,
+    snoozeCount: task.snoozeCount,
   };
 }
 

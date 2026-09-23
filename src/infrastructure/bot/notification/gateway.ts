@@ -138,14 +138,18 @@ export function reminderText(input: SendReminderInput, now: Date): string {
  * resulting time so there is nothing to compute in your head.
  */
 export function reminderKeyboard(
-  input: Pick<SendReminderInput, 'taskId' | 'timezone' | 'kind'>,
+  input: Pick<SendReminderInput, 'taskId' | 'timezone' | 'kind' | 'dueAt'>,
   now: Date,
 ): InlineKeyboard {
   const clock = (d: Date): string =>
     formatInTimeZone(d, input.timezone, 'HH:mm');
+  // The heads-up comes before the time: its Done names the occurrence, or
+  // it would be taken for a stale tap on a series that is "already ahead".
   const keyboard = new InlineKeyboard().text(
     '✅ Done',
-    `complete:${input.taskId}`,
+    input.kind === 'heads_up'
+      ? `complete:${input.taskId}:${Math.floor(input.dueAt.getTime() / 1000)}`
+      : `complete:${input.taskId}`,
   );
 
   if (input.kind !== 'heads_up') {

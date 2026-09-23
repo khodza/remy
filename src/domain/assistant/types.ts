@@ -65,7 +65,13 @@ export type InterpreterInput = {
   /** Tasks Remy last touched: what "it" refers to without a reply. */
   lastTaskIds: string[];
   /** Remy asked a question last turn; this message is probably the answer. */
-  pendingQuestion: { originalText: string; question: string } | null;
+  pendingQuestion: {
+    /** The first message of the exchange: the thing actually being asked for. */
+    originalText: string;
+    question: string;
+    /** Questions of this exchange that were already answered, oldest first. */
+    answered: { question: string; answer: string }[];
+  } | null;
   /** A forwarded / replied-to message the user wants to be reminded about. */
   quoted: { text: string; from: string | null } | null;
 };

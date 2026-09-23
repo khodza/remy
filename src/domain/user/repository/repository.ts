@@ -18,4 +18,13 @@ export interface UserRepository {
     kind: DigestKind,
     localDate: string,
   ): Promise<boolean>;
+  /**
+   * Gives a claim back after a send that may work later (Telegram 429/5xx,
+   * network), so the next run inside the digest's window tries again.
+   */
+  releaseDigest(
+    userId: string,
+    kind: DigestKind,
+    localDate: string,
+  ): Promise<void>;
 }

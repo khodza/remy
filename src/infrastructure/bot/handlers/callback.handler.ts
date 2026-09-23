@@ -14,7 +14,11 @@ import { Domain } from '@common/tokens';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
 import { formatForUser } from '@common/format-date';
-import { type SnoozePresetKey, snoozePresetTime } from '@common/fire-time';
+import {
+  type SnoozePresetKey,
+  effectiveDueAt,
+  snoozePresetTime,
+} from '@common/fire-time';
 import { ignoreNotModified } from '../telegram-safe';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
 import {
@@ -69,7 +73,9 @@ export class CallbackHandler {
       console.error('Failed to handle callback:', error);
       toast = '❌ Action failed';
     }
-    await ctx.answerCallbackQuery({ text: toast }).catch(() => undefined);
+    await ctx
+      .answerCallbackQuery(toast ? { text: toast } : {})
+      .catch(() => undefined);
   }
 
   private async dispatch(ctx: Context, data: string): Promise<Toast> {
@@ -79,6 +85,7 @@ export class CallbackHandler {
     if (data.startsWith('delete:')) return this.handleDelete(ctx, data);
     if (data.startsWith('undo:')) return this.handleUndo(ctx, data);
     if (data.startsWith('ans:')) return this.handleAnswer(ctx, data);
+    if (data === 'noop') return '';
     if (data.startsWith('fwd:')) return this.handleForwardWhen(ctx, data);
     if (data.startsWith('tz:')) return this.handleTimezone(ctx, data);
     if (data.startsWith('rv:')) return this.handleReview(ctx, data);
@@ -87,22 +94,29 @@ export class CallbackHandler {
   }
 
   private async handleComplete(ctx: Context, data: string): Promise<Toast> {
-    const owned = await this.ownedTask(ctx, data.replace('complete:', ''));
+    const [, taskId = '', occurrence] = data.split(':');
+    const owned = await this.ownedTask(ctx, taskId);
     if (typeof owned === 'string') return owned;
     const { task: before, user } = owned;
 
-    const task = await this.markCompleteUsecase.execute({ taskId: before.id });
+    const task = await this.markCompleteUsecase.execute({
+      taskId: before.id,
+      ...(occurrence !== undefined
+        ? { occurrenceAt: new Date(Number(occurrence) * 1000) }
+        : {}),
+    });
     const keyboard = task.alreadyDone
       ? undefined
       : await this.undoKeyboard(ctx, user, before, 'completed');
-    const repeat = describeRecurrence(task.recurrence, task.timezone);
+    const timezone = resolveTimezone(user);
+    const repeat = describeRecurrence(task.recurrence, timezone);
 
     if (repeat && task.status === 'pending') {
       // Recurring tasks advance instead of completing; tell the user when
       // the next occurrence is so "Done" doesn't look like it deleted it.
       await this.edit(
         ctx,
-        `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${task.scheduledAt ? formatForUser(task.scheduledAt, task.timezone) : '—'}`,
+        `✅ <b>Done!</b>\n\n📝 ${escapeHtml(task.description)}\n🔁 Repeats ${repeat}\n⏭ Next: ${task.scheduledAt ? formatForUser(task.scheduledAt, timezone) : '—'}`,
         keyboard,
       );
       return task.alreadyDone
@@ -143,12 +157,12 @@ export class CallbackHandler {
     if (typeof owned === 'string') return owned;
     const { task: before, user } = owned;
 
-    // Computed at tap time, in the task's zone: the label on an old
+    // Computed at tap time, in the user's zone: the label on an old
     // reminder may say "Tonight 20:00" long after tonight has passed.
     const until = snoozePresetTime(
       key as SnoozePresetKey,
       new Date(),
-      before.timezone,
+      resolveTimezone(user),
     );
     if (!until) return '⌛ That time has already passed; pick another';
 
@@ -199,18 +213,37 @@ export class CallbackHandler {
     if (!ctx.from) return '❌ Action failed';
     const chatId = ctx.chat?.id ?? ctx.from.id;
     const state = await this.conversations.getState(chatId);
+    // Buttons of an older question must not answer the one open now: the
+    // same index would pick an unrelated option.
+    const label = pressedButtonText(ctx, data);
     const option =
       state.pendingQuestion?.options[parseInt(data.replace('ans:', ''), 10)];
-    if (option === undefined) return '⌛ That question is no longer open';
+    if (
+      option === undefined ||
+      (label !== undefined && label !== option.slice(0, 40))
+    ) {
+      await ignoreNotModified(
+        ctx.editMessageReplyMarkup({ reply_markup: undefined }),
+      );
+      return '⌛ That question is no longer open';
+    }
 
+    // Keep the choice visible: a tap leaves no message in the chat, and a
+    // question with no visible answer reads as if Remy was ignored.
     await ignoreNotModified(
-      ctx.editMessageReplyMarkup({ reply_markup: undefined }),
+      ctx.editMessageReplyMarkup({
+        reply_markup: new InlineKeyboard().text(
+          `✓ ${option.slice(0, 40)}`,
+          'noop',
+        ),
+      }),
     );
     const user = await this.ensureUserUsecase.execute(
       toEnsureUserInput(ctx.from),
     );
     await this.responder.respond(ctx, user, option, {
       source: { type: 'text' },
+      answersPendingQuestion: true,
     });
     return option.slice(0, 60);
   }
@@ -353,9 +386,11 @@ export class CallbackHandler {
     before: Task,
     after: Task,
   ): Promise<void> {
+    // The due time, not nextFireAt: with a heads-up that is an earlier ping.
+    const due = effectiveDueAt(after);
     await this.edit(
       ctx,
-      `⏰ <b>Snoozed</b>\n\n📝 ${escapeHtml(after.description)}\n⏭ Reminding again at ${after.nextFireAt ? formatForUser(after.nextFireAt, after.timezone) : '—'}`,
+      `⏰ <b>Snoozed</b>\n\n📝 ${escapeHtml(after.description)}\n⏭ Reminding again at ${due ? formatForUser(due, resolveTimezone(user)) : '—'}`,
       await this.undoKeyboard(ctx, user, before, 'snoozed'),
     );
   }
@@ -404,4 +439,14 @@ export class CallbackHandler {
     if (task.userId !== user.id) return '❌ Unauthorized';
     return { task, user };
   }
+}
+
+/** The label of the inline button that produced this callback, if Telegram sent the keyboard. */
+function pressedButtonText(ctx: Context, data: string): string | undefined {
+  const rows = ctx.callbackQuery?.message?.reply_markup?.inline_keyboard ?? [];
+  for (const button of rows.flat()) {
+    if ('callback_data' in button && button.callback_data === data)
+      return button.text;
+  }
+  return undefined;
 }

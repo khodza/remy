@@ -62,6 +62,7 @@ describe('TaskController', () => {
       update: jest.fn(),
       listAll: jest.fn(),
       claimDigest: jest.fn(),
+      releaseDigest: jest.fn(),
       findByCalendarToken: jest.fn(),
     };
     listTasks = { execute: jest.fn() };

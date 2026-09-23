@@ -30,9 +30,12 @@ export class MarkCompleteUsecase {
         // Idempotent: if the series already sits in the future (a stale
         // reminder message tapped twice, or two old messages tapped in a
         // row), don't skip a cycle.
+        const meansThisOccurrence =
+          input.occurrenceAt?.getTime() === existing.scheduledAt.getTime();
         if (
           existing.scheduledAt.getTime() > now.getTime() &&
-          existing.status === TaskStatus.Pending
+          existing.status === TaskStatus.Pending &&
+          !meansThisOccurrence
         ) {
           return { ...existing, alreadyDone: true };
         }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { addDays, addMinutes, getDay, isValid } from 'date-fns';
-import { fromZonedTime, toZonedTime } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 import { computeNextOccurrence } from '@common/recurrence';
 import type {
   CandidateTask,
@@ -107,7 +107,12 @@ export function interpretAssistantOutput(
   const toInstant = (
     local: string | null,
     inMinutes: number | null = null,
+    leadMinutes: number | null = null,
   ): Date | null | 'invalid' => {
+    // "saturday 6pm, 3 hours before" comes back with the lead copied into
+    // in_minutes as well; a named time plus the same number is the lead.
+    if (local !== null && local.trim() !== '' && inMinutes === leadMinutes)
+      inMinutes = null;
     if (inMinutes !== null && inMinutes > 0 && inMinutes <= 60 * 24 * 366) {
       return addMinutes(ctx.now, inMinutes);
     }
@@ -142,10 +147,10 @@ export function interpretAssistantOutput(
     out.intent !== 'create' && out.tasks.length === 1
       ? out.tasks[0]
       : undefined;
-  const ask = (question: string): Interpretation => ({
+  const ask = (question: string, options: string[] = []): Interpretation => ({
     intent: 'unclear',
     question,
-    options: [],
+    options,
   });
 
   switch (out.intent) {
@@ -154,7 +159,12 @@ export function interpretAssistantOutput(
       for (const t of out.tasks) {
         const title = t.title.trim();
         if (title === '') continue;
-        const dueAt = toInstant(t.due_local, t.in_minutes);
+        // "remind me at 5" names no task; a reminder titled "Remind me" is noise.
+        if (EMPTY_TITLE.test(title))
+          return ask('What should I remind you about?');
+        let dueAt = toInstant(t.due_local, t.in_minutes, t.lead_minutes);
+        if (dueAt instanceof Date && !t.recurrence && out.tasks.length === 1)
+          dueAt = alignToNamedWeekday(dueAt, ctx.text, ctx.timezone);
         if (dueAt === 'invalid')
           return ask(`When exactly should I remind you about "${title}"?`);
         const recurrence = dueAt
@@ -176,6 +186,7 @@ export function interpretAssistantOutput(
         ) {
           return ask(
             `"${capitalise(title)}": that time has already passed. When should I remind you?`,
+            pastTimeOptions(firstAt, ctx),
           );
         }
         tasks.push({
@@ -194,7 +205,21 @@ export function interpretAssistantOutput(
           notes: t.notes?.trim() ? t.notes.trim() : null,
         });
       }
-      return tasks.length > 0 ? { intent: 'create', tasks } : FALLBACK_QUESTION;
+      if (tasks.length === 0) return FALLBACK_QUESTION;
+      // The user named a clock time and the model dropped it: a reminder
+      // silently filed in the Inbox never fires. Ask instead.
+      if (
+        tasks.every((t) => t.dueAt === null) &&
+        MENTIONS_CLOCK_TIME.test(ctx.text) &&
+        !WANTS_NO_DATE.test(ctx.text)
+      ) {
+        return ask(
+          tasks.length === 1
+            ? `When should I remind you about "${tasks[0]!.title}"?`
+            : 'When should I remind you about these?',
+        );
+      }
+      return { intent: 'create', tasks };
     }
     case 'query':
       return {
@@ -214,11 +239,12 @@ export function interpretAssistantOutput(
       if (targetIds.length === 0) return ask('Which task should I move?');
       // Models sometimes restate the task in `tasks` with its new time
       // instead of using the top-level field; accept that shape too.
-      const dueAt = toInstant(
+      let dueAt = toInstant(
         out.due_local ?? restated?.due_local ?? null,
         out.in_minutes ?? restated?.in_minutes ?? null,
       );
       if (dueAt === 'invalid') return ask('To when should I move it?');
+      if (dueAt) dueAt = alignToNamedWeekday(dueAt, ctx.text, ctx.timezone);
       const shift =
         out.shift_minutes !== null && out.shift_minutes !== 0
           ? out.shift_minutes
@@ -267,6 +293,56 @@ export function interpretAssistantOutput(
 }
 
 const PAST_TOLERANCE_MS = 60 * 1000;
+
+/** "at 5", "17:00", "5pm", "в 5", "soat 5": the message names a clock time. */
+const MENTIONS_CLOCK_TIME =
+  /\b(at|by|@)\s*\d{1,2}\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*[ap]\.?m\b|(^|\s)(в|к)\s*\d{1,2}(\s|$|[:.,])|soat\s*\d{1,2}/iu;
+const WANTS_NO_DATE =
+  /\b(no|without)(\s+(a|an|any))?\s+(date|time)\b|без\s*(даты|времени)|sanasiz/iu;
+
+/** Weekday names by date-fns day number (0 = Sunday): English, Russian, Uzbek. */
+const WEEKDAY_NAMES: RegExp[] = [
+  /^(sunday|воскресень\p{L}*|yakshanba\p{L}*)$/iu,
+  /^(monday|понедельник\p{L}*|dushanba\p{L}*)$/iu,
+  /^(tuesday|вторник\p{L}*|seshanba\p{L}*)$/iu,
+  /^(wednesday|сред[ауые]|chorshanba\p{L}*)$/iu,
+  /^(thursday|четверг\p{L}*|payshanba\p{L}*)$/iu,
+  /^(friday|пятниц\p{L}*|juma\p{L}*)$/iu,
+  /^(saturday|суббот\p{L}*|shanba\p{L}*)$/iu,
+];
+
+/**
+ * Models miscount weekdays ("saturday" came back as a Thursday). When the
+ * message names exactly one weekday and the date is on another, move it to
+ * the first such weekday on or after the model's date, same time of day.
+ */
+function alignToNamedWeekday(date: Date, text: string, timezone: string): Date {
+  const named = new Set<number>();
+  for (const word of text.match(/\p{L}+/gu) ?? []) {
+    const day = WEEKDAY_NAMES.findIndex((re) => re.test(word));
+    if (day >= 0) named.add(day);
+  }
+  const [wanted] = [...named];
+  if (named.size !== 1 || wanted === undefined) return date;
+  const zoned = toZonedTime(date, timezone);
+  const ahead = (wanted - getDay(zoned) + 7) % 7;
+  return ahead === 0 ? date : fromZonedTime(addDays(zoned, ahead), timezone);
+}
+
+/** Titles that only restate "remind me" instead of naming something. */
+const EMPTY_TITLE =
+  /^(remind( me)?|reminder|notification|напомни(ть)?( мне)?|напоминание|eslat(ma)?)[.!]?$/iu;
+
+function isSameLocalDay(a: Date, b: Date, timezone: string): boolean {
+  const day = (d: Date): string => formatInTimeZone(d, timezone, 'yyyy-MM-dd');
+  return day(a) === day(b);
+}
+
+/** One tap to the usual meaning of a time that just passed: the same time tomorrow. */
+function pastTimeOptions(past: Date, ctx: InterpretContext): string[] {
+  if (!isSameLocalDay(past, ctx.now, ctx.timezone)) return [];
+  return [`Tomorrow ${formatInTimeZone(past, ctx.timezone, 'HH:mm')}`];
+}
 
 const BULK_WORDS =
   /\b(all|every|everything|each|both|today'?s|tomorrow'?s)\b|все|всё|всех|hammasi|barcha/iu;

@@ -1,3 +1,4 @@
+import { NotificationFailedError } from '@domain/notification/errors';
 import {
   SendDailyDigestsUsecase,
   dueDigests,
@@ -167,5 +168,23 @@ describe('SendDailyDigestsUsecase', () => {
     tasks.find.mockResolvedValue([]);
     notifications.sendDigest.mockRejectedValueOnce(new Error('telegram down'));
     expect(await usecase.execute(at2100)).toEqual({ sent: 1, failed: 1 });
+  });
+
+  it('a Telegram hiccup does not cost the day: the next run sends the brief', async () => {
+    const { tasks, notifications, usecase } = setup();
+    tasks.find.mockResolvedValue([]);
+    notifications.sendDigest.mockRejectedValueOnce(new Error('telegram down'));
+    expect(await usecase.execute(at0800)).toEqual({ sent: 0, failed: 1 });
+    expect(await usecase.execute(at0800)).toEqual({ sent: 1, failed: 0 });
+  });
+
+  it('a blocked bot is not retried every minute', async () => {
+    const { tasks, notifications, usecase } = setup();
+    tasks.find.mockResolvedValue([]);
+    notifications.sendDigest.mockRejectedValueOnce(
+      new NotificationFailedError('blocked', undefined, { permanent: true }),
+    );
+    expect(await usecase.execute(at0800)).toEqual({ sent: 0, failed: 1 });
+    expect(await usecase.execute(at0800)).toEqual({ sent: 0, failed: 0 });
   });
 });

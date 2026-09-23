@@ -30,6 +30,13 @@ import type { AssistantResult, HandleMessageInput } from './types';
 const MAX_DATED_CANDIDATES = 45;
 const MAX_TODO_CANDIDATES = 15;
 const PENDING_QUESTION_TTL_MINUTES = 5;
+/**
+ * Questions Remy may ask in a row about one request. Past this the model is
+ * going in circles; starting over beats a fourth question.
+ */
+const MAX_QUESTION_ROUNDS = 3;
+const GIVE_UP_REPLY =
+  'Sorry, I keep missing it. Nothing was saved. Please say the whole thing again in one message, for example: “call my brother tomorrow at 17:00”.';
 const PENDING_FORWARD_TTL_MINUTES = 15;
 const QUOTED_NOTES_MAX = 1000;
 
@@ -110,9 +117,15 @@ export class HandleMessageUsecase {
       ],
     );
 
+    // A tapped answer names its question, so it is never "too late" for it.
     const pendingQuestion =
       state.pendingQuestion &&
-      isFresh(state.pendingQuestion.askedAt, now, PENDING_QUESTION_TTL_MINUTES)
+      (input.answersPendingQuestion === true ||
+        isFresh(
+          state.pendingQuestion.askedAt,
+          now,
+          PENDING_QUESTION_TTL_MINUTES,
+        ))
         ? state.pendingQuestion
         : null;
     const pendingForward =
@@ -160,12 +173,13 @@ export class HandleMessageUsecase {
         ? {
             originalText: pendingQuestion.originalText,
             question: pendingQuestion.question,
+            answered: pendingQuestion.answered ?? [],
           }
         : null,
       quoted,
     });
 
-    const result = await this.act(
+    let result = await this.act(
       interpretation,
       input,
       candidates,
@@ -175,6 +189,15 @@ export class HandleMessageUsecase {
     );
 
     // Conversation memory.
+    const answered = pendingQuestion
+      ? [
+          ...(pendingQuestion.answered ?? []),
+          { question: pendingQuestion.question, answer: input.text },
+        ]
+      : [];
+    if (result.kind === 'question' && answered.length >= MAX_QUESTION_ROUNDS) {
+      result = { kind: 'chat', reply: GIVE_UP_REPLY };
+    }
     if (result.kind === 'question') {
       await this.conversations.setPendingQuestion(input.chatId, {
         // Keep the first message of the exchange as the thing being clarified.
@@ -182,6 +205,7 @@ export class HandleMessageUsecase {
         question: result.question,
         options: result.options,
         askedAt: now,
+        answered,
       });
     } else {
       if (state.pendingQuestion)
@@ -257,8 +281,22 @@ export class HandleMessageUsecase {
         if (before.length === 0) return askWhich('Which task did you finish?');
         const undoId = await this.recordBefore(input, before, 'completed');
         const after: Task[] = [];
-        for (const task of before)
-          after.push(await this.markComplete.execute({ taskId: task.id }));
+        for (const task of before) {
+          // "already took my pills" half an hour early means today's dose.
+          const early =
+            task.recurrence !== null &&
+            task.scheduledAt !== null &&
+            task.scheduledAt.getTime() > now.getTime() &&
+            task.scheduledAt.getTime() < addDays(now, 1).getTime();
+          after.push(
+            await this.markComplete.execute({
+              taskId: task.id,
+              ...(early && task.scheduledAt
+                ? { occurrenceAt: task.scheduledAt }
+                : {}),
+            }),
+          );
+        }
         return { kind: 'completed', tasks: after, undoId };
       }
 
