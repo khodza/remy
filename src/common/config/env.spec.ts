@@ -12,7 +12,7 @@ describe('loadEnv', () => {
     expect(env.NODE_ENV).toBe('development');
     expect(env.PORT).toBe(3000);
     expect(env.MONGODB_URI).toBe('mongodb://localhost:27017/remy');
-    expect(env.JWT_EXPIRES_IN).toBe('15m');
+    expect(env.JWT_EXPIRES_IN).toBe(900);
     expect(env.INIT_DATA_MAX_AGE_SECONDS).toBe(86400);
     expect(env.CORS_ORIGINS).toEqual([]);
     expect(env.OWNER_TELEGRAM_ID).toBeUndefined();
@@ -81,5 +81,25 @@ describe('loadEnv', () => {
         CORS_ORIGINS: 'https://web.telegram.org',
       }),
     ).not.toThrow();
+  });
+
+  it('parses JWT_EXPIRES_IN into seconds and rejects other formats', () => {
+    expect(loadEnv({ ...valid, JWT_EXPIRES_IN: '15m' }).JWT_EXPIRES_IN).toBe(
+      900,
+    );
+    expect(loadEnv({ ...valid, JWT_EXPIRES_IN: '2h' }).JWT_EXPIRES_IN).toBe(
+      7200,
+    );
+    expect(loadEnv({ ...valid, JWT_EXPIRES_IN: '7d' }).JWT_EXPIRES_IN).toBe(
+      604800,
+    );
+    expect(loadEnv({ ...valid, JWT_EXPIRES_IN: '600' }).JWT_EXPIRES_IN).toBe(
+      600,
+    );
+    for (const bad of ['15 minutes', 'abc', '-5m', '0', '1.5h']) {
+      expect(() => loadEnv({ ...valid, JWT_EXPIRES_IN: bad })).toThrow(
+        /JWT_EXPIRES_IN/,
+      );
+    }
   });
 });

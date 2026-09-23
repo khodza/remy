@@ -22,6 +22,23 @@ const boolish = z.preprocess((value) => {
   return Boolean(value);
 }, z.boolean());
 
+/** "900", "900s", "15m", "12h", "7d" → seconds (jsonwebtoken's `expiresIn`). */
+const DURATION_UNITS = { s: 1, m: 60, h: 3600, d: 86400 } as const;
+const duration = z
+  .string()
+  .trim()
+  .regex(
+    /^\d+\s*[smhd]?$/,
+    'must be a number of seconds or a number with s/m/h/d, e.g. 15m',
+  )
+  .transform((value) => {
+    const match = /^(\d+)\s*([smhd]?)$/.exec(value);
+    const amount = Number(match?.[1]);
+    const unit = (match?.[2] || 's') as keyof typeof DURATION_UNITS;
+    return amount * DURATION_UNITS[unit];
+  })
+  .refine((seconds) => seconds > 0, 'must be longer than zero');
+
 const csv = z
   .string()
   .optional()
@@ -48,7 +65,8 @@ export const envSchema = z
     MONGODB_URI: z.string().min(1).default('mongodb://localhost:27017/remy'),
 
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-    JWT_EXPIRES_IN: z.string().min(1).default('15m'),
+    /** Token lifetime, parsed to seconds ("15m" → 900). */
+    JWT_EXPIRES_IN: duration.default(900),
     INIT_DATA_MAX_AGE_SECONDS: z.coerce
       .number()
       .int()

@@ -62,11 +62,16 @@ describe('AuthService', () => {
     expect(typeof result.token).toBe('string');
     expect(result.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    const decoded = jwtService.verify<{ sub: string; tgId: number }>(
-      result.token,
-    );
+    const decoded = jwtService.verify<{
+      sub: string;
+      tgId: number;
+      iat: number;
+      exp: number;
+    }>(result.token);
     expect(decoded.sub).toBe('user-1');
     expect(decoded.tgId).toBe(42);
+    // JWT_EXPIRES_IN=15m is parsed to seconds by the env schema.
+    expect(decoded.exp - decoded.iat).toBe(900);
   });
 
   it('throws InvalidInputError when initData has no user', async () => {

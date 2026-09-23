@@ -86,7 +86,7 @@ describe('JwtAuthGuard', () => {
   it('rejects an expired token', async () => {
     const token = await jwtService.signAsync(
       { sub: 'user-1', tgId: 42 },
-      { expiresIn: -10 as unknown as number },
+      { expiresIn: -10 },
     );
     const { context } = makeContext(`Bearer ${token}`);
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(

@@ -35,8 +35,8 @@ import {
         const env = getEnv();
         return {
           secret: env.JWT_SECRET,
-          // jsonwebtoken accepts "15m"-style strings; the type says number.
-          signOptions: { expiresIn: env.JWT_EXPIRES_IN as unknown as number },
+          // Seconds; env.ts parses "15m"-style values.
+          signOptions: { expiresIn: env.JWT_EXPIRES_IN },
         };
       },
     }),

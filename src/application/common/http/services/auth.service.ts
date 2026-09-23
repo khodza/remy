@@ -46,7 +46,7 @@ export class AuthService {
 
     const token = await this.jwtService.signAsync(
       { sub: user.id, tgId: user.telegramUserId },
-      { expiresIn: getEnv().JWT_EXPIRES_IN as unknown as number },
+      { expiresIn: getEnv().JWT_EXPIRES_IN },
     );
     const decoded = this.jwtService.decode<{ exp: number }>(token);
     const expiresAt = new Date(decoded.exp * 1000).toISOString();
