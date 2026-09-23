@@ -4,6 +4,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { UserSchema } from '@infra/mongodb/user/schema';
 import { UserRepositoryImpl } from '@infra/mongodb/user/repository';
 import type { UserDocument } from '@infra/mongodb/user/document';
+import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 
 describe('calendar feed token (real MongoDB)', () => {
   let mongod: MongoMemoryServer;
@@ -44,5 +45,40 @@ describe('calendar feed token (real MongoDB)', () => {
     expect(await users.findByCalendarToken(token)).toBeNull();
     // Turning it off doesn't disturb other fields.
     expect((await users.findById(a.id))?.firstName).toBe('A');
+  });
+
+  it('EnsureUser refresh: save() on an existing user changes the names only', async () => {
+    const created = await users.save({
+      telegramUserId: 3,
+      firstName: 'Old',
+      lastName: 'Name',
+      username: 'old',
+      timezone: 'Asia/Tashkent',
+    });
+    await users.update({
+      id: created.id,
+      calendarToken: 'z'.repeat(43),
+    });
+
+    const ensure = new EnsureUserUsecase(users);
+    const refreshed = await ensure.execute({
+      telegramUserId: 3,
+      firstName: 'New',
+      username: 'new',
+      timezone: 'Europe/Berlin', // only applied on create
+    });
+
+    expect(refreshed.id).toBe(created.id);
+    expect(refreshed).toMatchObject({
+      firstName: 'New',
+      lastName: null,
+      username: 'new',
+      timezone: 'Asia/Tashkent',
+      calendarToken: 'z'.repeat(43),
+    });
+    expect(await users.findById(created.id)).toMatchObject({
+      firstName: 'New',
+      timezone: 'Asia/Tashkent',
+    });
   });
 });

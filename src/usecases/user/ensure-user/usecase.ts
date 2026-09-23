@@ -4,6 +4,7 @@ import { Domain } from '@common/tokens';
 import { EnsureUserInput, EnsureUserOutput } from './types';
 import { ApplicationError } from '@domain/error';
 import { FailedToSaveUserError } from '@domain/user/errors';
+import type { User } from '@domain/user';
 
 @Injectable()
 export class EnsureUserUsecase {
@@ -20,7 +21,18 @@ export class EnsureUserUsecase {
       );
 
       if (existingUser !== null) {
-        return existingUser;
+        // People rename themselves in Telegram. Refresh the profile, but
+        // write only when something actually changed (this runs on every
+        // message and every Mini App login).
+        if (!profileChanged(existingUser, input)) return existingUser;
+        // save() upserts by telegramUserId and leaves timezone alone when
+        // it is not passed, so this touches the names only.
+        return await this.userRepository.save({
+          telegramUserId: input.telegramUserId,
+          firstName: input.firstName,
+          lastName: input.lastName,
+          username: input.username,
+        });
       }
 
       // Create new user
@@ -38,4 +50,13 @@ export class EnsureUserUsecase {
       throw new FailedToSaveUserError('Failed to ensure user exists', error);
     }
   }
+}
+
+/** Telegram omits last_name / username when they are not set. */
+function profileChanged(user: User, input: EnsureUserInput): boolean {
+  return (
+    user.firstName !== input.firstName ||
+    user.lastName !== (input.lastName ?? null) ||
+    user.username !== (input.username ?? null)
+  );
 }

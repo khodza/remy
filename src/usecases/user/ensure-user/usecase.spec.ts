@@ -39,18 +39,67 @@ describe('EnsureUserUsecase', () => {
     usecase = new EnsureUserUsecase(userRepository);
   });
 
-  it('should return existing user if found', async () => {
+  it('should return existing user if found and unchanged', async () => {
     userRepository.findByTelegramUserId.mockResolvedValue(mockUser);
 
     const result = await usecase.execute({
       telegramUserId: 12345,
       firstName: 'John',
+      lastName: 'Doe',
+      username: 'johndoe',
+      timezone: 'Asia/Tashkent',
     });
 
     expect(userRepository.findByTelegramUserId).toHaveBeenCalledWith(12345);
     expect(userRepository.save).not.toHaveBeenCalled();
     expect(result).toEqual(mockUser);
   });
+
+  it.each([
+    [
+      'first name',
+      { firstName: 'Johnny', lastName: 'Doe', username: 'johndoe' },
+    ],
+    [
+      'last name',
+      { firstName: 'John', lastName: 'Smith', username: 'johndoe' },
+    ],
+    ['username', { firstName: 'John', lastName: 'Doe', username: 'jd' }],
+    ['a removed last name', { firstName: 'John', username: 'johndoe' }],
+    ['a removed username', { firstName: 'John', lastName: 'Doe' }],
+  ])(
+    'refreshes an existing user whose %s changed, in one write',
+    async (
+      _what,
+      names: { firstName: string; lastName?: string; username?: string },
+    ) => {
+      userRepository.findByTelegramUserId.mockResolvedValue(mockUser);
+      const refreshed: User = {
+        ...mockUser,
+        firstName: names.firstName,
+        lastName: names.lastName ?? null,
+        username: names.username ?? null,
+      };
+      userRepository.save.mockResolvedValue(refreshed);
+
+      const result = await usecase.execute({
+        telegramUserId: 12345,
+        ...names,
+        timezone: 'Asia/Tashkent',
+      });
+
+      expect(userRepository.save).toHaveBeenCalledTimes(1);
+      // Names only: the timezone of an existing user is never overwritten.
+      expect(userRepository.save).toHaveBeenCalledWith({
+        telegramUserId: 12345,
+        firstName: names.firstName,
+        lastName: names.lastName,
+        username: names.username,
+      });
+      expect(userRepository.update).not.toHaveBeenCalled();
+      expect(result).toEqual(refreshed);
+    },
+  );
 
   it('should create new user when not found', async () => {
     userRepository.findByTelegramUserId.mockResolvedValue(null);
