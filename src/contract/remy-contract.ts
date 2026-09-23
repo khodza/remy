@@ -243,6 +243,10 @@ export type Recurrence = NonNullable<Task['recurrence']>;
 export const DeleteResult = z.object({ success: z.boolean() });
 export type DeleteResult = z.infer<typeof DeleteResult>;
 
+/** A plain acknowledgement (POST /tasks/:id/show-source). */
+export const OkResult = z.object({ success: z.boolean() });
+export type OkResult = z.infer<typeof OkResult>;
+
 export const ErrorBody = z.object({
   statusCode: z.number().int(),
   /** Nest HttpStatus key, e.g. "NOT_FOUND". */
@@ -303,6 +307,10 @@ export const Settings = z.object({
   }),
   /** A summary of the week, sent at the evening-review time on the last day of the week. */
   weeklyWrap: z.object({ enabled: z.boolean() }),
+  /** Also send the morning brief as a spoken voice message (TTS). Default off. */
+  voiceBrief: z.boolean(),
+  /** Keep a live "Today" agenda message pinned in the chat. Default off. */
+  pinnedAgenda: z.boolean(),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -320,6 +328,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   escalation: { enabled: true, stepsMinutes: [30, 120] },
   weeklyWrap: { enabled: true },
+  voiceBrief: false,
+  pinnedAgenda: false,
 };
 
 /** Any subset; nested objects may be partial too. */
@@ -333,6 +343,8 @@ export const UpdateSettingsRequest = z
     quietHours: Settings.shape.quietHours.partial().strict(),
     escalation: Settings.shape.escalation.partial().strict(),
     weeklyWrap: Settings.shape.weeklyWrap.partial().strict(),
+    voiceBrief: z.boolean(),
+    pinnedAgenda: z.boolean(),
   })
   .partial()
   .strict();
@@ -505,6 +517,44 @@ export const ExportResult = z.object({
 });
 export type ExportResult = z.infer<typeof ExportResult>;
 
+/**
+ * DELETE /data — "Delete all my data": every task (for good), categories,
+ * conversation memory, the calendar feed link, and settings back to the
+ * defaults. The account (Telegram id, name, zone) stays. The body must
+ * carry the confirmation literally.
+ */
+export const DeleteAllDataRequest = z
+  .object({ confirm: z.literal('DELETE') })
+  .strict();
+export type DeleteAllDataRequest = z.infer<typeof DeleteAllDataRequest>;
+
+export const DeleteAllDataResult = z.object({
+  success: z.boolean(),
+  /** Tasks removed (pending, done and soft-deleted). */
+  deletedTasks: z.number().int().nonnegative(),
+});
+export type DeleteAllDataResult = z.infer<typeof DeleteAllDataResult>;
+
+/**
+ * POST /client-errors — a Mini App error for the server log (204, no body).
+ * Rate-limited; bodies over 16 KB are refused (413).
+ */
+export const ClientErrorReport = z
+  .object({
+    message: z.string().trim().min(1).max(1000),
+    /** window.onerror, an unhandled promise, a render error boundary, a failed API call. */
+    kind: z.enum(['error', 'unhandledrejection', 'render', 'api']).optional(),
+    stack: z.string().max(8000).optional(),
+    /** The app route, e.g. "/task/64b…" (no query secrets, please). */
+    url: z.string().max(2000).optional(),
+    userAgent: z.string().max(500).optional(),
+    appVersion: z.string().max(64).optional(),
+    /** When it happened on the device. */
+    at: IsoInstant.optional(),
+  })
+  .strict();
+export type ClientErrorReport = z.infer<typeof ClientErrorReport>;
+
 export const UpdateTimezoneRequest = z
   .object({ timezone: z.string().trim().min(1).max(100) })
   .strict();
@@ -519,6 +569,8 @@ export type UpdateTimezoneRequest = z.infer<typeof UpdateTimezoneRequest>;
 export const endpoints = {
   health: { method: 'GET', path: '/health', auth: 'none' },
   authTelegram: { method: 'POST', path: '/auth/telegram', auth: 'tma' },
+  /** A still-valid JWT → a fresh AuthResult; sessions end 7 days after the initData exchange. */
+  authRefresh: { method: 'POST', path: '/auth/refresh', auth: 'jwt' },
   me: { method: 'GET', path: '/user/me', auth: 'jwt' },
   updateTimezone: { method: 'PATCH', path: '/user/timezone', auth: 'jwt' },
   getSettings: { method: 'GET', path: '/settings', auth: 'jwt' },
@@ -558,5 +610,7 @@ export const endpoints = {
   /** The subscription itself: the secret in the path is the only auth. */
   calendarIcs: { method: 'GET', path: '/calendar/:token.ics', auth: 'none' },
   exportData: { method: 'POST', path: '/export', auth: 'jwt' },
+  deleteAllData: { method: 'DELETE', path: '/data', auth: 'jwt' },
+  reportClientError: { method: 'POST', path: '/client-errors', auth: 'jwt' },
 } as const;
 export type EndpointName = keyof typeof endpoints;

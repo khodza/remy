@@ -3,3 +3,4 @@ export * from './render-calendar-feed';
 export * from './export-data';
 export * from './parse-list';
 export * from './import-tasks';
+export * from './delete-all-data';

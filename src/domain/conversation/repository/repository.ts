@@ -49,4 +49,10 @@ export interface ConversationRepository {
     outcome: ReviewOutcome,
     newDueAt: Date | null,
   ): Promise<ReviewState | null>;
+
+  /**
+   * "Delete all my data": message links, conversation state, undo records
+   * and stored reviews of the chat.
+   */
+  deleteAllForChat(chatId: number): Promise<void>;
 }

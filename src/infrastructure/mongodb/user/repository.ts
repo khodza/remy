@@ -181,5 +181,7 @@ function mergeSettings(
       ],
     },
     weeklyWrap: { ...d.weeklyWrap, ...s.weeklyWrap },
+    voiceBrief: s.voiceBrief ?? d.voiceBrief,
+    pinnedAgenda: s.pinnedAgenda ?? d.pinnedAgenda,
   };
 }

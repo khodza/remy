@@ -13,6 +13,8 @@ import type { AuthContext } from '../types';
 interface JwtPayload {
   sub: string;
   tgId: number;
+  /** Session start (initData exchange); older tokens lack it. */
+  authAt?: number;
   iat: number;
   exp: number;
 }
@@ -45,6 +47,7 @@ export class JwtAuthGuard implements CanActivate {
     const auth: AuthContext = {
       userId: payload.sub,
       telegramUserId: payload.tgId,
+      authAt: payload.authAt ?? payload.iat,
     };
     req.auth = auth;
     return true;

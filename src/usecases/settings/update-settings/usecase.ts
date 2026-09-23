@@ -29,6 +29,8 @@ export function mergeSettingsPatch(
       ],
     },
     weeklyWrap: { ...current.weeklyWrap, ...patch.weeklyWrap },
+    voiceBrief: patch.voiceBrief ?? current.voiceBrief,
+    pinnedAgenda: patch.pinnedAgenda ?? current.pinnedAgenda,
   };
 }
 

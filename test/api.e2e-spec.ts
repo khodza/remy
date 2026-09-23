@@ -21,6 +21,7 @@ import {
   Category,
   CategoryList,
   DEFAULT_SETTINGS,
+  DeleteAllDataResult,
   ErrorBody,
   ExportResult,
   ListSummaries,
@@ -153,6 +154,38 @@ describe('Remy API (e2e)', () => {
     expect(wire.User.parse(me.body).timezone).toBe('Asia/Tashkent');
   });
 
+  it('refresh: a still-valid JWT buys a fresh one (gap 6); no JWT, no refresh', async () => {
+    const res = await authed(api().post('/api/v1/auth/refresh')).expect(201);
+    const body = wire.AuthResult.parse(res.body);
+    expect(body.user.telegramUserId).toBe(MOCK_TG_ID);
+    await api()
+      .get('/api/v1/user/me')
+      .set('Authorization', `Bearer ${body.token}`)
+      .expect(200);
+    await api().post('/api/v1/auth/refresh').expect(401);
+    await api()
+      .post('/api/v1/auth/refresh')
+      .set('Authorization', 'Bearer not.a.jwt')
+      .expect(401);
+    token = body.token;
+  });
+
+  it('client errors: logged, 204; validated, size-capped and authenticated', async () => {
+    await authed(api().post('/api/v1/client-errors'))
+      .send({ message: 'TypeError: x is undefined', kind: 'error', url: '/' })
+      .expect(204);
+    await authed(api().post('/api/v1/client-errors'))
+      .send({ message: 'x', password: 'nope' })
+      .expect(400);
+    await authed(api().post('/api/v1/client-errors'))
+      .send({ message: 'x', stack: 'y'.repeat(20_000) })
+      .expect(413);
+    await api()
+      .post('/api/v1/client-errors')
+      .send({ message: 'x' })
+      .expect(401);
+  });
+
   it('settings: defaults, nested partial update, validation', async () => {
     const initial = await authed(api().get('/api/v1/settings')).expect(200);
     expect(Settings.parse(initial.body)).toEqual(DEFAULT_SETTINGS);
@@ -164,6 +197,18 @@ describe('Remy API (e2e)', () => {
       defaultView: 'list',
       quietHours: { ...DEFAULT_SETTINGS.quietHours, from: '22:30' },
     });
+
+    const toggled = await authed(api().patch('/api/v1/settings'))
+      .send({ voiceBrief: true, pinnedAgenda: true })
+      .expect(200);
+    expect(Settings.parse(toggled.body)).toMatchObject({
+      voiceBrief: true,
+      pinnedAgenda: true,
+      defaultView: 'list',
+    });
+    await authed(api().patch('/api/v1/settings'))
+      .send({ voiceBrief: 'yes' })
+      .expect(400);
 
     await authed(api().patch('/api/v1/settings'))
       .send({ morningBrief: { time: '8am' } })
@@ -801,5 +846,58 @@ describe('Remy API (e2e)', () => {
       (await authed(api().get('/api/v1/tasks?view=inbox')).expect(200)).body,
     ).tasks.length;
     expect(after).toBe(before);
+  });
+
+  it('delete all data: needs the literal confirmation, then wipes tasks, categories, feed and settings', async () => {
+    await authed(api().delete('/api/v1/data')).send({}).expect(400);
+    await authed(api().delete('/api/v1/data'))
+      .send({ confirm: 'yes' })
+      .expect(400);
+    await authed(api().post('/api/v1/calendar/feed')).expect(201);
+    const before = wire.TaskList.parse(
+      (
+        await authed(api().get('/api/v1/tasks?includeCompleted=true')).expect(
+          200,
+        )
+      ).body,
+    ).tasks.length;
+    expect(before).toBeGreaterThan(0);
+
+    const res = await authed(api().delete('/api/v1/data'))
+      .send({ confirm: 'DELETE' })
+      .expect(200);
+    const result = DeleteAllDataResult.parse(res.body);
+    expect(result.success).toBe(true);
+    expect(result.deletedTasks).toBeGreaterThanOrEqual(before);
+
+    const after = wire.TaskList.parse(
+      (
+        await authed(api().get('/api/v1/tasks?includeCompleted=true')).expect(
+          200,
+        )
+      ).body,
+    );
+    expect(after.tasks).toEqual([]);
+    expect(
+      Settings.parse(
+        (await authed(api().get('/api/v1/settings')).expect(200)).body,
+      ),
+    ).toEqual(DEFAULT_SETTINGS);
+    expect(
+      CalendarFeed.parse(
+        (await authed(api().get('/api/v1/calendar/feed')).expect(200)).body,
+      ),
+    ).toEqual({ enabled: false, path: null });
+    // Categories start over from the defaults.
+    const { categories } = CategoryList.parse(
+      (await authed(api().get('/api/v1/categories')).expect(200)).body,
+    );
+    expect(categories.map((c) => c.name)).toContain('Health');
+    // The account itself is still there.
+    expect(
+      wire.User.parse(
+        (await authed(api().get('/api/v1/user/me')).expect(200)).body,
+      ).timezone,
+    ).toBe('Asia/Tashkent');
   });
 });

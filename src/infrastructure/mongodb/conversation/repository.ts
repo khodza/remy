@@ -222,6 +222,14 @@ export class ConversationRepositoryImpl implements ConversationRepository {
     return doc?.review ? toReviewState(doc.review) : null;
   }
 
+  public async deleteAllForChat(chatId: number): Promise<void> {
+    await Promise.all([
+      this.messages.deleteMany({ chat_id: chatId }),
+      this.conversations.deleteMany({ chat_id: chatId }),
+      this.undos.deleteMany({ chat_id: chatId }),
+    ]);
+  }
+
   private async patch(
     chatId: number,
     set: Partial<ConversationDoc>,

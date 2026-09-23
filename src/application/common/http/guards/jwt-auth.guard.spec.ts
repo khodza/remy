@@ -56,7 +56,11 @@ describe('JwtAuthGuard', () => {
     const { context, request } = makeContext(`Bearer ${token}`);
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(request.auth).toEqual({ userId: 'user-1', telegramUserId: 42 });
+    expect(request.auth).toEqual({
+      userId: 'user-1',
+      telegramUserId: 42,
+      authAt: expect.any(Number), // iat for tokens without authAt
+    });
   });
 
   it('rejects when Authorization header is missing', async () => {

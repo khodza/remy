@@ -17,6 +17,10 @@ export type UserSettings = {
   escalation: { enabled: boolean; stepsMinutes: number[] };
   /** Weekly summary at the evening-review time on the last day of the week. */
   weeklyWrap: { enabled: boolean };
+  /** The morning brief is also sent as a spoken (TTS) voice message. */
+  voiceBrief: boolean;
+  /** Keep a live "Today" agenda message pinned in the chat. */
+  pinnedAgenda: boolean;
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -33,6 +37,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   },
   escalation: { enabled: true, stepsMinutes: [30, 120] },
   weeklyWrap: { enabled: true },
+  voiceBrief: false,
+  pinnedAgenda: false,
 };
 
 /** Deep-partial of UserSettings, one level of nesting. */
@@ -128,7 +134,9 @@ export type CreateUserParams = {
 export type UpdateUserParams = {
   id: string;
   timezone?: string;
-  settings?: UserSettings;
-  categories?: Category[];
+  /** null = back to the defaults. */
+  settings?: UserSettings | null;
+  /** null = never set up (the defaults are created on next use). */
+  categories?: Category[] | null;
   calendarToken?: string | null;
 };

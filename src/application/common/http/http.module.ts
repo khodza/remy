@@ -19,6 +19,8 @@ import { CategoryController } from './controllers/category.controller';
 import { CalendarController } from './controllers/calendar.controller';
 import { ExportController } from './controllers/export.controller';
 import { ListController } from './controllers/list.controller';
+import { AccountDataController } from './controllers/account-data.controller';
+import { ClientErrorController } from './controllers/client-error.controller';
 import { DataModule } from '../data/data.module';
 import { getEnv } from '@common/config';
 import { GetSettingsUsecase, UpdateSettingsUsecase } from '@usecases/settings';
@@ -59,6 +61,8 @@ import {
     CalendarController,
     ExportController,
     ListController,
+    AccountDataController,
+    ClientErrorController,
     HealthController,
   ],
   providers: [

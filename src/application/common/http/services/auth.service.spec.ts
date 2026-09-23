@@ -3,7 +3,9 @@ import { sign } from '@tma.js/init-data-node';
 import type { User } from '@domain/user';
 import { EnsureUserUsecase } from '@usecases/user';
 import { InvalidInputError } from '@common/errors';
-import { AuthService } from './auth.service';
+import { UnauthorizedException } from '@nestjs/common';
+import { AuthService, MAX_SESSION_SECONDS } from './auth.service';
+import { mockUserRepository } from '@test/factories';
 import { DEFAULT_USER_SETTINGS } from '@domain/user';
 
 const BOT_TOKEN = 'test-bot-token:AAHtest';
@@ -38,7 +40,42 @@ describe('AuthService', () => {
     service = new AuthService(
       jwtService,
       ensureUserUsecase as unknown as EnsureUserUsecase,
+      mockUserRepository(user),
     );
+  });
+
+  describe('refresh', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it('issues a new token for the same user and keeps the session start', async () => {
+      const authAt = Math.floor(Date.now() / 1000) - 3600;
+      const result = await service.refresh({
+        userId: 'user-1',
+        telegramUserId: 42,
+        authAt,
+      });
+      expect(result.user.id).toBe('user-1');
+      const decoded = jwtService.verify<{
+        sub: string;
+        tgId: number;
+        authAt: number;
+      }>(result.token);
+      expect(decoded).toMatchObject({ sub: 'user-1', tgId: 42, authAt });
+    });
+
+    it('refuses a session older than the cap, and an unknown user', async () => {
+      const tooOld = Math.floor(Date.now() / 1000) - MAX_SESSION_SECONDS - 1;
+      await expect(
+        service.refresh({
+          userId: 'user-1',
+          telegramUserId: 42,
+          authAt: tooOld,
+        }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(
+        service.refresh({ userId: 'ghost', telegramUserId: 42 }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
   });
 
   it('exchanges valid initData for a JWT and user DTO', async () => {

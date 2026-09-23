@@ -9,6 +9,7 @@ export interface UserRepository {
   findByCalendarToken(token: string): Promise<User | null>;
   update(params: UpdateUserParams): Promise<User>;
   listAll(): Promise<User[]>;
+
   /**
    * Marks a digest as sent for the user's local date. Atomic: returns true
    * for exactly one caller per (user, kind, date), false if already sent.

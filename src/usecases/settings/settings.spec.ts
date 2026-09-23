@@ -37,6 +37,24 @@ describe('settings use cases', () => {
     expect(users.current().settings).toEqual(updated);
   });
 
+  it('voiceBrief and pinnedAgenda default off and toggle on their own', async () => {
+    const users = mockUserRepository();
+    expect(DEFAULT_USER_SETTINGS).toMatchObject({
+      voiceBrief: false,
+      pinnedAgenda: false,
+    });
+    const updated = await new UpdateSettingsUsecase(users).execute({
+      userId: 'user-1',
+      patch: { voiceBrief: true },
+    });
+    expect(updated).toMatchObject({ voiceBrief: true, pinnedAgenda: false });
+    const again = await new UpdateSettingsUsecase(users).execute({
+      userId: 'user-1',
+      patch: { pinnedAgenda: true },
+    });
+    expect(again).toMatchObject({ voiceBrief: true, pinnedAgenda: true });
+  });
+
   it.each([
     ['a bad time', { morningBrief: { time: '25:00' } }],
     [

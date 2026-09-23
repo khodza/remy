@@ -127,7 +127,12 @@ export function mockUserRepository(
       user = {
         ...user,
         ...(params.timezone !== undefined ? { timezone: params.timezone } : {}),
-        ...(params.settings !== undefined ? { settings: params.settings } : {}),
+        ...(params.settings !== undefined
+          ? {
+              settings:
+                params.settings ?? structuredClone(DEFAULT_USER_SETTINGS),
+            }
+          : {}),
         ...(params.categories !== undefined
           ? { categories: params.categories }
           : {}),
@@ -203,6 +208,14 @@ export function mockConversationRepository(): jest.Mocked<ConversationRepository
     }),
     setLastTaskIds: jest.fn(async (_chatId, ids: string[]) => {
       state.lastTaskIds = ids;
+    }),
+    deleteAllForChat: jest.fn(async (_chatId: number) => {
+      links.clear();
+      undos.clear();
+      reviews.clear();
+      state.pendingQuestion = null;
+      state.pendingForward = null;
+      state.lastTaskIds = [];
     }),
     saveUndo: jest.fn(async (record) => {
       const id = `undo-${++seq}`;
