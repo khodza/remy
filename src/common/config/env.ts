@@ -165,7 +165,3 @@ export function getEnv(): Env {
   cached ??= loadEnv();
   return cached;
 }
-
-export function resetEnvCache(): void {
-  cached = undefined;
-}
