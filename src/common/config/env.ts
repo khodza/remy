@@ -108,6 +108,11 @@ export const envSchema = z
      * used from a plain browser. Refused in production.
      */
     DEV_ALLOW_MOCK_INITDATA: boolish.default(false),
+
+    /** pino level. Default: debug in development, info in production, silent in tests. */
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== 'production') return;

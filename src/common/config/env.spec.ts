@@ -13,6 +13,7 @@ describe('loadEnv', () => {
     expect(env.PORT).toBe(3000);
     expect(env.MONGODB_URI).toBe('mongodb://localhost:27017/remy');
     expect(env.JWT_EXPIRES_IN).toBe(900);
+    expect(env.LOG_LEVEL).toBeUndefined();
     expect(env.INIT_DATA_MAX_AGE_SECONDS).toBe(86400);
     expect(env.CORS_ORIGINS).toEqual([]);
     expect(env.OWNER_TELEGRAM_ID).toBeUndefined();
