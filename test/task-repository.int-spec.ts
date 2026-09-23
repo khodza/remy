@@ -7,7 +7,10 @@
  */
 import mongoose, { type Model } from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { TaskSchema } from '@infra/mongodb/task/schema';
+import {
+  DELETED_TASK_TTL_SECONDS,
+  TaskSchema,
+} from '@infra/mongodb/task/schema';
 import type { TaskDocument } from '@infra/mongodb/task/document';
 import { TaskRepositoryImpl } from '@infra/mongodb/task/repository';
 import { TaskStatus, type CreateTaskParams } from '@domain/task';
@@ -349,5 +352,135 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
     expect((await repo.claimDueReminder(now))?.task.id).toBe(
       legacy.insertedId.toHexString(),
     );
+  });
+
+  it('backfills the 2.4.0 fields idempotently: all_day, list, deleted_at', async () => {
+    const legacyDeleted = await model.collection.insertOne({
+      user_id: 'user-1',
+      telegram_chat_id: 42,
+      description: 'Old deleted',
+      scheduled_at: past,
+      status: 'deleted',
+      created_at: past,
+      updated_at: past,
+    });
+    const legacyOpen = await model.collection.insertOne({
+      user_id: 'user-1',
+      telegram_chat_id: 42,
+      description: 'Old open',
+      scheduled_at: null,
+      status: 'pending',
+      created_at: past,
+      updated_at: past,
+    });
+
+    await repo.onModuleInit();
+    await repo.onModuleInit(); // a second boot changes nothing
+
+    const raw = (id: unknown) => model.collection.findOne({ _id: id as never });
+    expect(await raw(legacyDeleted.insertedId)).toMatchObject({
+      all_day: false,
+      list: null,
+      deleted_at: past, // its purge clock starts at its last change
+    });
+    const open = await raw(legacyOpen.insertedId);
+    expect(open).toMatchObject({ all_day: false, list: null });
+    expect(open?.['deleted_at'] ?? null).toBeNull(); // never purged
+    expect(
+      await repo.findById(legacyOpen.insertedId.toHexString()),
+    ).toMatchObject({ allDay: false, list: null, kind: 'todo' });
+  });
+
+  describe('2.4.0 fields', () => {
+    it('round-trips allDay and list; a todo is never all-day', async () => {
+      const allDay = await repo.create(
+        params({ allDay: true, list: 'shopping' }),
+      );
+      expect(await repo.findById(allDay.id)).toMatchObject({
+        allDay: true,
+        list: 'shopping',
+      });
+      const todo = await repo.create(
+        params({ scheduledAt: null, allDay: true }),
+      );
+      expect((await repo.findById(todo.id))?.allDay).toBe(false);
+      const moved = await repo.update({
+        id: allDay.id,
+        allDay: false,
+        list: null,
+      });
+      expect(moved).toMatchObject({ allDay: false, list: null });
+    });
+
+    it('soft delete starts the 30-day purge clock and a restore (Undo) stops it', async () => {
+      const task = await repo.create(params());
+      await repo.update({ id: task.id, status: TaskStatus.Deleted });
+      const byId = await model.findById(task.id).lean();
+      expect(byId?.deleted_at).toBeInstanceOf(Date);
+      await repo.update({ id: task.id, status: TaskStatus.Pending });
+      expect((await model.findById(task.id).lean())?.deleted_at).toBeNull();
+
+      const indexes = await model.collection.indexes();
+      const ttl = indexes.find((i) => i.key['deleted_at'] === 1);
+      expect(ttl?.expireAfterSeconds).toBe(DELETED_TASK_TTL_SECONDS);
+      expect(DELETED_TASK_TTL_SECONDS).toBe(30 * 24 * 60 * 60);
+    });
+
+    it('filters by list and searches title, notes and list, every word, case-insensitive', async () => {
+      const milk = await repo.create(
+        params({ description: 'Buy MILK', list: 'shopping' }),
+      );
+      const bread = await repo.create(
+        params({
+          description: 'Bread',
+          notes: 'the (whole) grain one',
+          list: 'shopping',
+        }),
+      );
+      const call = await repo.create(params({ description: 'Call mom' }));
+      await repo.create(params({ userId: 'user-2', description: 'Buy milk' }));
+      const deleted = await repo.create(
+        params({ description: 'Buy milk too' }),
+      );
+      await repo.update({ id: deleted.id, status: TaskStatus.Deleted });
+      const base = {
+        userId: 'user-1',
+        statuses: [TaskStatus.Pending, TaskStatus.Completed],
+        sort: 'createdAtDesc' as const,
+      };
+      const ids = async (extra: object) =>
+        (await repo.find({ ...base, ...extra })).map((t) => t.id).sort();
+
+      expect(await ids({ list: 'shopping' })).toEqual(
+        [milk.id, bread.id].sort(),
+      );
+      expect(await ids({ search: ['milk'] })).toEqual([milk.id]);
+      expect(await ids({ search: ['buy', 'milk'] })).toEqual([milk.id]);
+      expect(await ids({ search: ['(whole)'] })).toEqual([bread.id]);
+      expect(await ids({ search: ['shop'] })).toEqual(
+        [milk.id, bread.id].sort(),
+      );
+      expect(await ids({ search: ['mom'], list: 'shopping' })).toEqual([]);
+      expect(await ids({ search: ['.*'] })).toEqual([]);
+      expect(call.id).toBeDefined();
+    });
+
+    it('summarises lists (pending / completed, deleted ignored) and deletes all of a user', async () => {
+      await repo.create(params({ list: 'shopping' }));
+      const done = await repo.create(params({ list: 'shopping' }));
+      await repo.update({ id: done.id, status: TaskStatus.Completed });
+      const gone = await repo.create(params({ list: 'ideas' }));
+      await repo.update({ id: gone.id, status: TaskStatus.Deleted });
+      await repo.create(params({ list: 'books' }));
+      await repo.create(params({ userId: 'user-2', list: 'secret' }));
+
+      expect(await repo.listSummaries('user-1')).toEqual([
+        { name: 'books', pending: 1, completed: 0 },
+        { name: 'shopping', pending: 1, completed: 1 },
+      ]);
+
+      expect(await repo.deleteAllForUser('user-1')).toBe(4);
+      expect(await model.countDocuments({})).toBe(1);
+    });
   });
 });

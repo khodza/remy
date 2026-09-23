@@ -80,8 +80,16 @@ export type Task = {
    * Null for todos.
    */
   scheduledAt: Date | null;
-  /** IANA zone the task was created in; every display uses it. */
+  /** IANA zone the task was created in; recurrence math runs in it. */
   timezone: string;
+  /**
+   * A date with no time. scheduledAt then sits at 09:00 local on that date
+   * (common/all-day.ts), which is when it fires; it is overdue only once
+   * the day is over. Always false for todos.
+   */
+  allDay: boolean;
+  /** Named list ("shopping"), normalised (common/list-name.ts); null if none. */
+  list: string | null;
   /**
    * Set when a recurring task's current occurrence was delayed: the
    * reminder fires at this time instead of scheduledAt, and the series is
@@ -145,6 +153,8 @@ export type CreateTaskParams = {
   priority?: Priority;
   categoryId?: string | null;
   leadMinutes?: number | null;
+  allDay?: boolean;
+  list?: string | null;
 };
 
 export type UpdateTaskParams = {
@@ -176,6 +186,8 @@ export type UpdateTaskParams = {
   lastSentAt?: Date;
   /** Explicitly null clears recurrence; undefined leaves it unchanged. */
   recurrence?: Recurrence | null;
+  allDay?: boolean;
+  list?: string | null;
 };
 
 /** Composable query for the Mini App's views. All conditions are ANDed. */
@@ -191,9 +203,19 @@ export type TaskFilter = {
   updatedAtOrAfter?: Date;
   /** completedAt >= value */
   completedAtOrAfter?: Date;
+  /** Only tasks on this (normalised) named list. */
+  list?: string;
+  /**
+   * Words that must all appear (case-insensitive, anywhere) in the title,
+   * the notes or the list name.
+   */
+  search?: string[];
   sort: 'dueAt' | 'completedAtDesc' | 'createdAtDesc';
   limit?: number;
 };
+
+/** A named list and how many tasks it holds. */
+export type ListSummary = { name: string; pending: number; completed: number };
 
 /** What the scheduler gets back from an atomic claim. */
 export type ClaimedReminder = {

@@ -67,13 +67,20 @@ const utcStamp = (date: Date) =>
   formatInTimeZone(date, 'UTC', "yyyyMMdd'T'HHmmss'Z'");
 const localStamp = (date: Date, tz: string) =>
   formatInTimeZone(date, tz, "yyyyMMdd'T'HHmmss");
+const dateStamp = (date: Date, tz: string) =>
+  formatInTimeZone(date, tz, 'yyyyMMdd');
 
 /**
  * RRULE value for a series. A "× N times" series is written as UNTIL its
  * last occurrence: DTSTART is the current occurrence, not the first, so a
  * COUNT would over-count.
  */
-export function toRRule(recurrence: Recurrence, timezone = 'UTC'): string {
+export function toRRule(
+  recurrence: Recurrence,
+  timezone = 'UTC',
+  /** All-day series have a DATE DTSTART, so UNTIL must be a DATE too. */
+  allDay = false,
+): string {
   const n = Math.max(1, Math.floor(recurrence.interval ?? 1));
   const interval = n > 1 ? `;INTERVAL=${n}` : '';
   let rule: string;
@@ -105,7 +112,8 @@ export function toRRule(recurrence: Recurrence, timezone = 'UTC'): string {
     }
   }
   const end = seriesEnd(recurrence, timezone);
-  return end ? `${rule};UNTIL=${utcStamp(end)}` : rule;
+  if (!end) return rule;
+  return `${rule};UNTIL=${allDay ? dateStamp(end, timezone) : utcStamp(end)}`;
 }
 
 function eventLines(
@@ -113,20 +121,24 @@ function eventLines(
   start: Date,
   input: CalendarInput,
   extra: string[],
+  /** An all-day task is a whole-day event (a snoozed occurrence is not). */
+  wholeDay = false,
 ): string[] {
   const category = task.categoryId
     ? input.categoryNames.get(task.categoryId)
     : undefined;
-  const dtstart = task.recurrence
-    ? `DTSTART;TZID=${task.timezone}:${localStamp(start, task.timezone)}`
-    : `DTSTART:${utcStamp(start)}`;
+  const dtstart = wholeDay
+    ? `DTSTART;VALUE=DATE:${dateStamp(start, task.timezone)}`
+    : task.recurrence
+      ? `DTSTART;TZID=${task.timezone}:${localStamp(start, task.timezone)}`
+      : `DTSTART:${utcStamp(start)}`;
   return [
     'BEGIN:VEVENT',
     `UID:${task.id}@remy`,
     `DTSTAMP:${utcStamp(input.now)}`,
     `LAST-MODIFIED:${utcStamp(task.updatedAt)}`,
     dtstart,
-    `DURATION:${EVENT_DURATION}`,
+    `DURATION:${wholeDay ? 'P1D' : EVENT_DURATION}`,
     `SUMMARY:${escapeText(task.description)}`,
     ...(task.notes ? [`DESCRIPTION:${escapeText(task.notes)}`] : []),
     ...(category ? [`CATEGORIES:${escapeText(category)}`] : []),
@@ -157,21 +169,33 @@ export function buildCalendar(input: CalendarInput): string {
     const series = task.scheduledAt!;
     if (!task.recurrence) {
       // A one-off snooze moves scheduledAt itself; snoozedUntil is a fallback.
-      lines.push(...eventLines(task, task.snoozedUntil ?? series, input, []));
+      const start = task.snoozedUntil ?? series;
+      lines.push(
+        ...eventLines(
+          task,
+          start,
+          input,
+          [],
+          task.allDay && !task.snoozedUntil,
+        ),
+      );
       continue;
     }
     lines.push(
-      ...eventLines(task, series, input, [
-        `RRULE:${toRRule(task.recurrence, task.timezone)}`,
-      ]),
+      ...eventLines(
+        task,
+        series,
+        input,
+        [`RRULE:${toRRule(task.recurrence, task.timezone, task.allDay)}`],
+        task.allDay,
+      ),
     );
     // A snoozed occurrence: override just that date, the series stays.
     if (task.snoozedUntil) {
-      lines.push(
-        ...eventLines(task, task.snoozedUntil, input, [
-          `RECURRENCE-ID;TZID=${task.timezone}:${localStamp(series, task.timezone)}`,
-        ]),
-      );
+      const recurrenceId = task.allDay
+        ? `RECURRENCE-ID;VALUE=DATE:${dateStamp(series, task.timezone)}`
+        : `RECURRENCE-ID;TZID=${task.timezone}:${localStamp(series, task.timezone)}`;
+      lines.push(...eventLines(task, task.snoozedUntil, input, [recurrenceId]));
     }
   }
 

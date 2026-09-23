@@ -29,6 +29,18 @@ describe('SnoozeTaskUsecase', () => {
     });
   });
 
+  it('a snoozed one-off all-day task gets a clock time and stops being all-day', async () => {
+    repo.findById.mockResolvedValue(makeTask({ allDay: true }));
+    await usecase.execute({ taskId: 'task-1', until: tonight });
+    expect(repo.update).toHaveBeenCalledWith({
+      id: 'task-1',
+      scheduledAt: tonight,
+      snoozedUntil: null,
+      incrementSnoozeCount: true,
+      allDay: false,
+    });
+  });
+
   it('snoozes only this occurrence of a recurring task', async () => {
     repo.findById.mockResolvedValue(
       makeTask({ recurrence: { type: 'daily' } }),

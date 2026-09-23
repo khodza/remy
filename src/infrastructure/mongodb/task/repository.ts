@@ -12,6 +12,7 @@ import {
   TaskFilter,
   TaskSource,
   Priority,
+  ListSummary,
   isScheduled,
 } from '@domain/task/repository';
 import { TaskDocument, RecurrenceSubdoc, SourceSubdoc } from './document';
@@ -113,6 +114,34 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         { updatePipeline: true, timestamps: false },
       ),
     );
+    // Contract 2.4.0 fields. all_day / list read back as false / null
+    // anyway; writing them keeps every document the same shape.
+    await step('all_day', () =>
+      this.model.updateMany(
+        { all_day: { $exists: false } },
+        { $set: { all_day: false } },
+        { timestamps: false },
+      ),
+    );
+    await step('list', () =>
+      this.model.updateMany(
+        { list: { $exists: false } },
+        { $set: { list: null } },
+        { timestamps: false },
+      ),
+    );
+    // Tasks deleted before the purge existed start their 30 days from their
+    // last change, so old deletions go on the first TTL pass after that.
+    await step('deleted_at', () =>
+      this.model.updateMany(
+        {
+          status: TaskStatus.Deleted,
+          $or: [{ deleted_at: { $exists: false } }, { deleted_at: null }],
+        },
+        [{ $set: { deleted_at: '$updated_at' } }],
+        { updatePipeline: true, timestamps: false },
+      ),
+    );
   }
 
   public async create(params: CreateTaskParams): Promise<Task> {
@@ -124,6 +153,8 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         notes: params.notes ?? null,
         scheduled_at: params.scheduledAt,
         timezone: params.timezone,
+        all_day: params.scheduledAt !== null && (params.allDay ?? false),
+        list: params.list ?? null,
         snoozed_until: null,
         next_fire_at: deriveNextFireAt({
           scheduledAt: params.scheduledAt,
@@ -146,6 +177,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         completed_at: null,
         completions: [],
         last_sent_at: null,
+        deleted_at: null,
       });
       return this.documentToEntity(doc);
     } catch (error) {
@@ -189,6 +221,21 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     if (filter.completedAtOrAfter) {
       query['completed_at'] = { $gte: filter.completedAtOrAfter };
     }
+    if (filter.list !== undefined) query['list'] = filter.list;
+    const words = (filter.search ?? []).filter((w) => w.trim() !== '');
+    if (words.length > 0) {
+      // Every word somewhere in the title, the notes or the list name.
+      query['$and'] = words.map((word) => {
+        const pattern = { $regex: escapeRegex(word.trim()), $options: 'i' };
+        return {
+          $or: [
+            { description: pattern },
+            { notes: pattern },
+            { list: pattern },
+          ],
+        };
+      });
+    }
 
     const sort: Record<string, 1 | -1> =
       filter.sort === 'completedAtDesc'
@@ -201,6 +248,46 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     if (filter.limit !== undefined) cursor = cursor.limit(filter.limit);
     const docs = await cursor;
     return docs.map((doc) => this.documentToEntity(doc));
+  }
+
+  public async listSummaries(userId: string): Promise<ListSummary[]> {
+    const rows = await this.model.aggregate<{
+      _id: string;
+      pending: number;
+      completed: number;
+    }>([
+      {
+        $match: {
+          user_id: userId,
+          status: { $in: [TaskStatus.Pending, TaskStatus.Completed] },
+          list: { $type: 'string' },
+        },
+      },
+      {
+        $group: {
+          _id: '$list',
+          pending: {
+            $sum: { $cond: [{ $eq: ['$status', TaskStatus.Pending] }, 1, 0] },
+          },
+          completed: {
+            $sum: {
+              $cond: [{ $eq: ['$status', TaskStatus.Completed] }, 1, 0],
+            },
+          },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+    return rows.map((r) => ({
+      name: r._id,
+      pending: r.pending,
+      completed: r.completed,
+    }));
+  }
+
+  public async deleteAllForUser(userId: string): Promise<number> {
+    const { deletedCount } = await this.model.deleteMany({ user_id: userId });
+    return deletedCount;
   }
 
   public async clearCategory(
@@ -286,7 +373,14 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         set['nudge_count'] = params.nudgeCount;
       if (params.snoozeCount !== undefined && !params.incrementSnoozeCount)
         set['snooze_count'] = params.snoozeCount;
-      if (params.status !== undefined) set['status'] = params.status;
+      if (params.status !== undefined) {
+        set['status'] = params.status;
+        // Starts (or, on a restore, stops) the 30-day purge clock.
+        set['deleted_at'] =
+          params.status === TaskStatus.Deleted ? new Date() : null;
+      }
+      if (params.allDay !== undefined) set['all_day'] = params.allDay;
+      if (params.list !== undefined) set['list'] = params.list;
       if (params.priority !== undefined) set['priority'] = params.priority;
       if (params.categoryId !== undefined)
         set['category_id'] = params.categoryId;
@@ -422,6 +516,8 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       kind: scheduledAt === null ? 'todo' : 'reminder',
       scheduledAt,
       timezone: document.timezone ?? LEGACY_TIMEZONE_FALLBACK,
+      allDay: scheduledAt !== null && document.all_day === true,
+      list: document.list ?? null,
       snoozedUntil,
       nextFireAt,
       nextAttemptAt: document.next_attempt_at ?? null,
@@ -445,6 +541,10 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       updatedAt: document.updated_at,
     };
   }
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function recurrenceToSubdoc(

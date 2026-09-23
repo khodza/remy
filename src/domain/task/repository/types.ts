@@ -12,5 +12,6 @@ export type {
   TaskSource,
   TaskSourceType,
   Completion,
+  ListSummary,
 } from '../types';
 export { TaskStatus, isScheduled } from '../types';

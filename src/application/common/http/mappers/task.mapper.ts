@@ -1,5 +1,6 @@
 import type { Recurrence, Task } from '@domain/task';
 import { effectiveDueAt } from '@common/fire-time';
+import { isTaskOverdue } from '@common/all-day';
 import type { RecurrenceInput, TaskWire } from '@contract/remy-contract';
 
 /** Completions the wire carries: the last 30 days, newest first, at most 50. */
@@ -16,6 +17,8 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
     kind: task.kind,
     scheduledAt: task.scheduledAt ? task.scheduledAt.toISOString() : null,
     timezone: task.timezone,
+    allDay: task.allDay,
+    list: task.list,
     snoozedUntil: task.snoozedUntil ? task.snoozedUntil.toISOString() : null,
     // For the client this is "when it is due" (snooze included). The
     // scheduler's internal fire time can be earlier (a pending heads-up) and
@@ -36,10 +39,7 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
     completionsCount: task.completions.length,
     completions: recentCompletions(task, now),
     snoozeCount: task.snoozeCount,
-    isOverdue:
-      task.status === 'pending' &&
-      dueAt !== null &&
-      dueAt.getTime() < now.getTime(),
+    isOverdue: isTaskOverdue(task, now),
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
   };

@@ -15,6 +15,8 @@ import {
   TaskNotFoundError,
 } from '@domain/task/errors';
 import { InvalidInputError } from '@common/errors';
+import { allDayFireTime } from '@common/all-day';
+import { normaliseListName } from '@common/list-name';
 import { assertCategoryBelongsToUser } from '../../category/assert-category';
 
 /** undefined leaves a field alone; null clears it. */
@@ -28,6 +30,10 @@ export type UpdateTaskInput = {
   priority?: Priority;
   categoryId?: string | null;
   leadMinutes?: number | null;
+  /** true = a date with no time (the time moves to 09:00 local that day). */
+  allDay?: boolean;
+  /** Named list, normalised; null takes the task off its list. */
+  list?: string | null;
 };
 export type UpdateTaskOutput = Task;
 
@@ -64,15 +70,36 @@ export class UpdateTaskUsecase {
       if (input.notes !== undefined) params.notes = input.notes;
       if (input.priority !== undefined) params.priority = input.priority;
       if (input.categoryId !== undefined) params.categoryId = input.categoryId;
+      if (input.list !== undefined) params.list = normaliseListName(input.list);
 
-      // The time the task will have after this update.
-      const scheduledAt =
+      // The time the task will have after this update. An all-day task sits
+      // at 09:00 on its date; turning allDay on (or moving an all-day task)
+      // normalises the time, which counts as a new time.
+      const timeAfter =
         input.scheduledAt !== undefined
           ? input.scheduledAt
           : existing.scheduledAt;
+      if (input.allDay === true && timeAfter === null) {
+        throw new InvalidInputError('An all-day task needs a date');
+      }
+      const allDay = (input.allDay ?? existing.allDay) && timeAfter !== null;
+      let newTime = input.scheduledAt;
+      if (allDay && timeAfter !== null) {
+        const normalised = allDayFireTime(timeAfter, existing.timezone);
+        if (
+          input.scheduledAt !== undefined ||
+          normalised.getTime() !== existing.scheduledAt?.getTime()
+        ) {
+          newTime = normalised;
+        }
+      }
+      if (allDay !== existing.allDay) params.allDay = allDay;
 
-      if (input.scheduledAt !== undefined) {
-        params.scheduledAt = input.scheduledAt;
+      const scheduledAt =
+        newTime !== undefined ? newTime : existing.scheduledAt;
+
+      if (newTime !== undefined) {
+        params.scheduledAt = newTime;
         params.snoozedUntil = null; // a new time supersedes any snooze
       }
 
@@ -96,7 +123,7 @@ export class UpdateTaskUsecase {
           params.recurrence = input.recurrence
             ? { ...input.recurrence, anchorAt: scheduledAt }
             : null;
-        } else if (input.scheduledAt !== undefined && existing.recurrence) {
+        } else if (newTime !== undefined && existing.recurrence) {
           params.recurrence = { ...existing.recurrence, anchorAt: scheduledAt };
         }
       }

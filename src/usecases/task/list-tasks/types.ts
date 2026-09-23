@@ -10,8 +10,15 @@ export type ListTasksInput = {
   includeCompleted?: boolean;
   /** Needed for 'today' / 'upcoming' day bounds. Defaults to UTC. */
   timezone?: string;
-  /** Caps 'done'. Default 50. */
+  /** Caps 'done' and a search. Default 50. */
   limit?: number;
+  /** Only tasks on this named list (normalised here). */
+  list?: string;
+  /**
+   * Search text: every word in title, notes or list; pending and completed,
+   * pending first. Overrides `view`.
+   */
+  search?: string;
 };
 
 export type TaskWithOverdueFlag = Task & {

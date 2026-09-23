@@ -131,8 +131,16 @@ function buildResponses<D extends z.ZodType>(date: D) {
     kind: TaskKind,
     /** Current occurrence (series time when recurring). Null for todos. */
     scheduledAt: date.nullable(),
-    /** IANA zone the task was created in. */
+    /** IANA zone the task was created in (recurrence runs in it; show times in the profile zone). */
     timezone: z.string(),
+    /**
+     * A date with no time. scheduledAt is then 09:00 on that date in the
+     * task's zone (when Remy pings it); show the date only. Overdue only
+     * once the whole day is over. Always false for todos.
+     */
+    allDay: z.boolean(),
+    /** Named list ("shopping"), lower case and normalised; null if none. */
+    list: z.string().nullable(),
     /** Set when only the current occurrence of a recurring task was delayed. */
     snoozedUntil: date.nullable(),
     /** When the task is due for the user: snoozedUntil ?? scheduledAt. Null for todos. (A "remind me before" heads-up fires earlier; that time is internal.) */
@@ -326,6 +334,12 @@ export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequest>;
 const Description = z.string().trim().min(1).max(4000);
 const Notes = z.string().max(4000);
 const LeadMinutes = z.number().int().min(1).max(10080);
+/**
+ * A named list. The server normalises it (trim, lower case, drops "my" /
+ * "the" and a trailing "list": "My Shopping List" → "shopping"); an empty
+ * result means no list.
+ */
+const ListName = z.string().trim().max(40);
 
 /** POST /tasks — natural language; the server parses it. */
 export const CreateTaskFromTextRequest = z
@@ -346,6 +360,13 @@ export const CreateTaskStructuredRequest = z
     priority: Priority.optional(),
     categoryId: ObjectIdString.nullable().optional(),
     leadMinutes: LeadMinutes.nullable().optional(),
+    /**
+     * A date with no time: send any instant on that date (local midnight is
+     * fine); the server stores 09:00 on it in the user's zone. Needs
+     * scheduledAt.
+     */
+    allDay: z.boolean().optional(),
+    list: ListName.nullable().optional(),
     /** What the user typed, kept as the task's source text. */
     originalText: z.string().max(4000).optional(),
   })
@@ -353,6 +374,10 @@ export const CreateTaskStructuredRequest = z
   .refine((v) => !(v.recurrence && !v.scheduledAt), {
     message: 'A recurring task needs a scheduledAt',
     path: ['recurrence'],
+  })
+  .refine((v) => !(v.allDay && !v.scheduledAt), {
+    message: 'An all-day task needs a scheduledAt (its date)',
+    path: ['allDay'],
   });
 export type CreateTaskStructuredRequest = z.infer<
   typeof CreateTaskStructuredRequest
@@ -369,6 +394,13 @@ export const UpdateTaskRequest = z
     priority: Priority,
     categoryId: ObjectIdString.nullable(),
     leadMinutes: LeadMinutes.nullable(),
+    /**
+     * true: keep only the date (the time becomes 09:00 local on it); false:
+     * a normal timed reminder again. Clearing scheduledAt clears it.
+     */
+    allDay: z.boolean(),
+    /** null takes the task off its list. */
+    list: ListName.nullable(),
   })
   .partial()
   .strict();
@@ -389,8 +421,17 @@ export const ListTasksQuery = z
     view: TaskView.optional(),
     /** Only used by view=all (or no view). */
     includeCompleted: z.enum(['true', 'false']).optional(),
-    /** Caps view=done; default 50, max 200. */
+    /** Caps view=done and q; default 50, max 200. */
     limit: z.coerce.number().int().min(1).max(200).optional(),
+    /** Only tasks on this named list (normalised like ListName). Combines with any view and q. */
+    list: z.string().trim().min(1).max(40).optional(),
+    /**
+     * Search: every word must appear (case-insensitive) in the title, notes
+     * or list name. Searches pending and completed tasks (never deleted),
+     * server-side; `view` and `includeCompleted` are ignored. Pending first
+     * (ordered like view=all), then completed newest first, capped by limit.
+     */
+    q: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
 export type ListTasksQuery = z.infer<typeof ListTasksQuery>;
@@ -409,6 +450,16 @@ export const ImportTasksRequest = z
   .object({ tasks: z.array(CreateTaskStructuredRequest).min(1).max(50) })
   .strict();
 export type ImportTasksRequest = z.infer<typeof ImportTasksRequest>;
+
+/** GET /lists — every named list that holds a pending or completed task. */
+export const ListSummary = z.object({
+  name: z.string(),
+  pending: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+});
+export type ListSummary = z.infer<typeof ListSummary>;
+export const ListSummaries = z.object({ lists: z.array(ListSummary) });
+export type ListSummaries = z.infer<typeof ListSummaries>;
 
 // ------------------------------------------------------------------- data ---
 
@@ -463,6 +514,7 @@ export const endpoints = {
   updateCategory: { method: 'PATCH', path: '/categories/:id', auth: 'jwt' },
   deleteCategory: { method: 'DELETE', path: '/categories/:id', auth: 'jwt' },
   listTasks: { method: 'GET', path: '/tasks', auth: 'jwt' },
+  listLists: { method: 'GET', path: '/lists', auth: 'jwt' },
   getTask: { method: 'GET', path: '/tasks/:id', auth: 'jwt' },
   createTaskFromText: { method: 'POST', path: '/tasks', auth: 'jwt' },
   createTaskStructured: {

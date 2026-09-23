@@ -10,3 +10,4 @@ export * from './update-task';
 export * from './reopen-task';
 export * from './snooze-task';
 export * from './skip-occurrence';
+export * from './list-lists';

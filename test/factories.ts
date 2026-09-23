@@ -28,6 +28,8 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     notes: null,
     kind: scheduledAt === null ? 'todo' : 'reminder',
     timezone: 'UTC',
+    allDay: false,
+    list: null,
     snoozedUntil: null,
     nextFireAt:
       scheduledAt === null ? null : (overrides.snoozedUntil ?? scheduledAt),
@@ -63,6 +65,8 @@ export function mockTaskRepository(): jest.Mocked<TaskRepository> {
     findByUserId: jest.fn(),
     find: jest.fn().mockResolvedValue([]),
     clearCategory: jest.fn().mockResolvedValue(undefined),
+    listSummaries: jest.fn().mockResolvedValue([]),
+    deleteAllForUser: jest.fn().mockResolvedValue(0),
     claimDueReminder: jest.fn().mockResolvedValue(null),
     releaseReminderClaim: jest.fn().mockResolvedValue(undefined),
     findOverdueRecurring: jest.fn().mockResolvedValue([]),

@@ -143,6 +143,14 @@ describe('TaskController', () => {
     });
   });
 
+  it('GET /tasks forwards list and q (as search)', async () => {
+    listTasks.execute.mockResolvedValue({ tasks: [] });
+    await controller.list(auth, { list: 'shopping', q: 'milk' });
+    expect(listTasks.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ list: 'shopping', search: 'milk' }),
+    );
+  });
+
   describe('create', () => {
     it('passes user timezone and the miniapp source into ProcessTextMessageUsecase', async () => {
       processText.execute.mockResolvedValue({

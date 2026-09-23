@@ -34,6 +34,8 @@ export type TaskDocument = {
   /** Null for todos. */
   scheduled_at: Date | null;
   timezone?: string;
+  all_day?: boolean;
+  list?: string | null;
   snoozed_until?: Date | null;
   next_fire_at?: Date | null;
   next_attempt_at?: Date | null;
@@ -52,6 +54,8 @@ export type TaskDocument = {
   completed_at?: Date | null;
   completions?: CompletionSubdoc[];
   last_sent_at?: Date | null;
+  /** When the task was soft-deleted; a TTL index purges it 30 days later. */
+  deleted_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 };

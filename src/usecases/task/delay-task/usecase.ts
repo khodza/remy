@@ -61,6 +61,8 @@ export class DelayTaskUsecase {
         scheduledAt: until,
         snoozedUntil: null,
         incrementSnoozeCount: true,
+        // It now has a clock time, so it is no longer an all-day task.
+        ...(task.allDay ? { allDay: false } : {}),
       });
     } catch (error) {
       if (error instanceof ApplicationError) throw error;

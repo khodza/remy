@@ -148,4 +148,83 @@ describe('UpdateTaskUsecase', () => {
       usecase.execute({ taskId: 'task-1', description: '   ' }),
     ).rejects.toBeInstanceOf(InvalidInputError);
   });
+
+  describe('allDay and lists', () => {
+    // 16 Apr 14:00 in Tashkent; the task zone decides the date.
+    const afternoon = new Date('2026-04-16T09:00:00Z');
+    const nineThere = new Date('2026-04-16T04:00:00Z');
+
+    it('turning allDay on keeps the date and moves the time to 09:00, re-anchoring a series', async () => {
+      tasks.findById.mockResolvedValue(
+        makeTask({
+          scheduledAt: afternoon,
+          timezone: 'Asia/Tashkent',
+          recurrence: { type: 'weekly', anchorAt: afternoon },
+        }),
+      );
+      await usecase.execute({ taskId: 'task-1', allDay: true });
+      expect(tasks.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        allDay: true,
+        scheduledAt: nineThere,
+        snoozedUntil: null,
+        recurrence: { type: 'weekly', anchorAt: nineThere },
+      });
+    });
+
+    it('moving an all-day task keeps it all-day on the new date', async () => {
+      tasks.findById.mockResolvedValue(
+        makeTask({
+          scheduledAt: nineThere,
+          allDay: true,
+          timezone: 'Asia/Tashkent',
+        }),
+      );
+      await usecase.execute({
+        taskId: 'task-1',
+        scheduledAt: new Date('2026-04-20T15:00:00Z'), // 20:00 on the 20th
+      });
+      expect(tasks.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        scheduledAt: new Date('2026-04-20T04:00:00Z'),
+        snoozedUntil: null,
+      });
+    });
+
+    it('allDay false keeps the time; clearing the time clears allDay', async () => {
+      tasks.findById.mockResolvedValue(
+        makeTask({ scheduledAt: nineThere, allDay: true }),
+      );
+      await usecase.execute({ taskId: 'task-1', allDay: false });
+      expect(tasks.update).toHaveBeenLastCalledWith({
+        id: 'task-1',
+        allDay: false,
+      });
+      await usecase.execute({ taskId: 'task-1', scheduledAt: null });
+      expect(tasks.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allDay: false, scheduledAt: null }),
+      );
+    });
+
+    it('refuses allDay on a todo', async () => {
+      tasks.findById.mockResolvedValue(makeTask({ scheduledAt: null }));
+      await expect(
+        usecase.execute({ taskId: 'task-1', allDay: true }),
+      ).rejects.toBeInstanceOf(InvalidInputError);
+    });
+
+    it('normalises the list name; null takes it off the list', async () => {
+      tasks.findById.mockResolvedValue(makeTask());
+      await usecase.execute({ taskId: 'task-1', list: 'Shopping List' });
+      expect(tasks.update).toHaveBeenLastCalledWith({
+        id: 'task-1',
+        list: 'shopping',
+      });
+      await usecase.execute({ taskId: 'task-1', list: null });
+      expect(tasks.update).toHaveBeenLastCalledWith({
+        id: 'task-1',
+        list: null,
+      });
+    });
+  });
 });

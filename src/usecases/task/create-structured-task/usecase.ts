@@ -5,7 +5,10 @@ import type {
   Task,
   TaskRepository,
 } from '@domain/task/repository';
+import type { TaskSourceType } from '@domain/task';
 import type { UserRepository } from '@domain/user';
+import { allDayFireTime } from '@common/all-day';
+import { normaliseListName } from '@common/list-name';
 import { Domain } from '@common/tokens';
 import { ApplicationError } from '@domain/error';
 import { FailedToCreateTaskError } from '@domain/task/errors';
@@ -24,8 +27,14 @@ export type CreateStructuredTaskInput = {
   priority?: Priority;
   categoryId?: string | null;
   leadMinutes?: number | null;
+  /** A date with no time: scheduledAt moves to 09:00 local that day. */
+  allDay?: boolean;
+  /** Named list; normalised ("My Shopping List" → "shopping"). */
+  list?: string | null;
   /** What the user typed before reviewing the parsed fields. */
   originalText?: string;
+  /** Where it came from; the Mini App unless said otherwise. */
+  sourceType?: TaskSourceType;
 };
 export type CreateStructuredTaskOutput = Task;
 
@@ -50,7 +59,13 @@ export class CreateStructuredTaskUsecase {
       if (description === '') {
         throw new InvalidInputError('Description cannot be empty');
       }
-      const scheduledAt = input.scheduledAt ?? null;
+      let scheduledAt = input.scheduledAt ?? null;
+      if (input.allDay && scheduledAt === null) {
+        throw new InvalidInputError('An all-day task needs a date');
+      }
+      if (input.allDay && scheduledAt !== null) {
+        scheduledAt = allDayFireTime(scheduledAt, input.timezone);
+      }
       if (input.recurrence && scheduledAt === null) {
         throw new InvalidInputError('A recurring task needs a time');
       }
@@ -77,8 +92,10 @@ export class CreateStructuredTaskUsecase {
         priority: input.priority ?? 'normal',
         categoryId: input.categoryId ?? null,
         leadMinutes: input.leadMinutes ?? null,
+        allDay: input.allDay === true,
+        list: normaliseListName(input.list),
         source: {
-          type: 'miniapp',
+          type: input.sourceType ?? 'miniapp',
           originalText: input.originalText ?? null,
           messageId: null,
           forwardedFrom: null,

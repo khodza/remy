@@ -23,6 +23,7 @@ import {
   DEFAULT_SETTINGS,
   ErrorBody,
   ExportResult,
+  ListSummaries,
   Settings,
   wire,
 } from '@contract/remy-contract';
@@ -462,6 +463,84 @@ describe('Remy API (e2e)', () => {
     await authed(api().patch(`/api/v1/tasks/${reminderId}`))
       .send({ recurrence: { type: 'weekly', intervalDays: 2 } })
       .expect(400);
+  });
+
+  it('all-day tasks, named lists and server-side search', async () => {
+    // Any instant on 1 Oct 2031 in Tashkent → stored at 09:00 local that day.
+    const allDay = wire.Task.parse(
+      (
+        await authed(api().post('/api/v1/tasks/structured'))
+          .send({
+            description: 'Passport renewal',
+            scheduledAt: '2031-10-01T15:30:00+05:00',
+            allDay: true,
+          })
+          .expect(201)
+      ).body,
+    );
+    expect(allDay).toMatchObject({
+      allDay: true,
+      scheduledAt: '2031-10-01T04:00:00.000Z',
+      isOverdue: false,
+      list: null,
+    });
+    await authed(api().post('/api/v1/tasks/structured'))
+      .send({ description: 'x', allDay: true })
+      .expect(400);
+    const timed = wire.Task.parse(
+      (
+        await authed(api().patch(`/api/v1/tasks/${allDay.id}`))
+          .send({ allDay: false })
+          .expect(200)
+      ).body,
+    );
+    expect(timed).toMatchObject({
+      allDay: false,
+      scheduledAt: '2031-10-01T04:00:00.000Z',
+    });
+
+    const milk = wire.Task.parse(
+      (
+        await authed(api().post('/api/v1/tasks/structured'))
+          .send({ description: 'Oat milk', list: 'My Shopping List' })
+          .expect(201)
+      ).body,
+    );
+    expect(milk.list).toBe('shopping');
+    await authed(api().post('/api/v1/tasks/structured'))
+      .send({ description: 'Bread', notes: 'rye', list: 'shopping' })
+      .expect(201);
+    const lists = ListSummaries.parse(
+      (await authed(api().get('/api/v1/lists')).expect(200)).body,
+    );
+    expect(lists.lists).toEqual([
+      { name: 'shopping', pending: 2, completed: 0 },
+    ]);
+    const onList = wire.TaskList.parse(
+      (await authed(api().get('/api/v1/tasks?list=Shopping')).expect(200)).body,
+    );
+    expect(onList.tasks.map((t) => t.description).sort()).toEqual([
+      'Bread',
+      'Oat milk',
+    ]);
+
+    // Search finds done tasks too (not only the last 100), never deleted.
+    await authed(api().post(`/api/v1/tasks/${milk.id}/complete`)).expect(201);
+    const found = wire.TaskList.parse(
+      (
+        await authed(api().get('/api/v1/tasks?q=MILK%20oat&limit=10')).expect(
+          200,
+        )
+      ).body,
+    );
+    expect(found.tasks.map((t) => [t.description, t.status])).toEqual([
+      ['Oat milk', 'completed'],
+    ]);
+    const byNotes = wire.TaskList.parse(
+      (await authed(api().get('/api/v1/tasks?q=rye')).expect(200)).body,
+    );
+    expect(byNotes.tasks.map((t) => t.description)).toEqual(['Bread']);
+    await authed(api().get('/api/v1/tasks?q=')).expect(400);
   });
 
   it('deleting a category uncategorises its tasks', async () => {

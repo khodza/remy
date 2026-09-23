@@ -89,4 +89,34 @@ describe('ical', () => {
     // Soonest first: the one-off (20th) before the series (21st).
     expect(ics.indexOf('a1@remy')).toBeLessThan(ics.indexOf('b2@remy'));
   });
+
+  it('writes all-day tasks as whole-day events, with a DATE UNTIL on a series', () => {
+    const birthday = makeTask({
+      id: 'd1',
+      description: 'Mom birthday',
+      scheduledAt: new Date('2026-09-20T04:00:00Z'), // 09:00 Tashkent
+      timezone: 'Asia/Tashkent',
+      allDay: true,
+    });
+    const weekly = makeTask({
+      id: 'd2',
+      description: 'Bins',
+      scheduledAt: new Date('2026-09-21T04:00:00Z'),
+      timezone: 'Asia/Tashkent',
+      allDay: true,
+      recurrence: {
+        type: 'weekly',
+        count: 2,
+        anchorAt: new Date('2026-09-21T04:00:00Z'),
+      },
+    });
+    const ics = buildCalendar({
+      name: 'Remy',
+      tasks: [birthday, weekly],
+      categoryNames: new Map(),
+      now: new Date('2026-09-19T00:00:00Z'),
+    });
+    expect(ics).toContain('DTSTART;VALUE=DATE:20260920\r\nDURATION:P1D');
+    expect(ics).toContain('RRULE:FREQ=WEEKLY;UNTIL=20260928');
+  });
 });

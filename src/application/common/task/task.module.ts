@@ -17,6 +17,7 @@ import {
   ReopenTaskUsecase,
   SnoozeTaskUsecase,
   SkipOccurrenceUsecase,
+  ListListsUsecase,
 } from '@usecases/task';
 import { UserModule } from '../user/user.module';
 import { ConversationModule } from '../conversation/conversation.module';
@@ -50,6 +51,7 @@ import { NotificationModule } from '../notification/notification.module';
     ReopenTaskUsecase,
     SnoozeTaskUsecase,
     SkipOccurrenceUsecase,
+    ListListsUsecase,
   ],
   exports: [
     Domain.Task.Repository,
@@ -65,6 +67,7 @@ import { NotificationModule } from '../notification/notification.module';
     ReopenTaskUsecase,
     SnoozeTaskUsecase,
     SkipOccurrenceUsecase,
+    ListListsUsecase,
   ],
 })
 export class TaskModule {}

@@ -131,4 +131,57 @@ describe('ListTasksUsecase', () => {
       expect.objectContaining({ limit: 5 }),
     );
   });
+
+  it('an all-day task is not overdue until its day is over', async () => {
+    taskRepository.find.mockResolvedValue([
+      makeTask({
+        id: 'birthday',
+        scheduledAt: new Date('2026-04-16T04:00:00Z'), // 09:00 Tashkent
+        allDay: true,
+        timezone: 'Asia/Tashkent',
+      }),
+    ]);
+    const { tasks } = await usecase.execute({ userId: 'user-1' });
+    expect(tasks[0]!.isOverdue).toBe(false);
+  });
+
+  it('list scopes any view to that (normalised) list', async () => {
+    await usecase.execute({
+      userId: 'user-1',
+      view: 'inbox',
+      list: 'My Shopping List',
+    });
+    expect(taskRepository.find).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'todo', list: 'shopping' }),
+    );
+  });
+
+  it('search: pending first, then completed newest first, capped by limit', async () => {
+    taskRepository.find
+      .mockResolvedValueOnce([makeTask({ id: 'open' })])
+      .mockResolvedValueOnce([
+        makeTask({ id: 'done', status: TaskStatus.Completed }),
+      ]);
+    const { tasks } = await usecase.execute({
+      userId: 'user-1',
+      view: 'today', // ignored
+      search: ' milk  bread ',
+      limit: 5,
+    });
+    expect(tasks.map((t) => t.id)).toEqual(['open', 'done']);
+    expect(taskRepository.find).toHaveBeenNthCalledWith(1, {
+      userId: 'user-1',
+      statuses: [TaskStatus.Pending],
+      search: ['milk', 'bread'],
+      sort: 'dueAt',
+      limit: 5,
+    });
+    expect(taskRepository.find).toHaveBeenNthCalledWith(2, {
+      userId: 'user-1',
+      statuses: [TaskStatus.Completed],
+      search: ['milk', 'bread'],
+      sort: 'completedAtDesc',
+      limit: 4,
+    });
+  });
 });

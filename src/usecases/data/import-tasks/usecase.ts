@@ -48,6 +48,8 @@ export class ImportTasksUsecase {
         throw new InvalidInputError(`${row}: the title is empty`);
       if (task.recurrence && !time)
         throw new InvalidInputError(`${row}: a repeating task needs a time`);
+      if (task.allDay && !time)
+        throw new InvalidInputError(`${row}: an all-day task needs a date`);
       if (task.leadMinutes && !time)
         throw new InvalidInputError(`${row}: "remind before" needs a time`);
       if (task.categoryId && !categoryIds.has(task.categoryId)) {

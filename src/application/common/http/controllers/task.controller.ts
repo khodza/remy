@@ -93,6 +93,8 @@ export class TaskController {
       includeCompleted: query.includeCompleted === 'true',
       timezone: zoneOf(user),
       ...(query.limit !== undefined ? { limit: query.limit } : {}),
+      ...(query.list !== undefined ? { list: query.list } : {}),
+      ...(query.q !== undefined ? { search: query.q } : {}),
     });
     const now = new Date();
     return { tasks: result.tasks.map((task) => toTaskWire(task, now)) };
@@ -150,6 +152,8 @@ export class TaskController {
       ...(dto.leadMinutes !== undefined
         ? { leadMinutes: dto.leadMinutes }
         : {}),
+      ...(dto.allDay !== undefined ? { allDay: dto.allDay } : {}),
+      ...(dto.list !== undefined ? { list: dto.list } : {}),
       ...(dto.originalText !== undefined
         ? { originalText: dto.originalText }
         : {}),
@@ -180,6 +184,8 @@ export class TaskController {
         ...(t.priority !== undefined ? { priority: t.priority } : {}),
         ...(t.categoryId !== undefined ? { categoryId: t.categoryId } : {}),
         ...(t.leadMinutes !== undefined ? { leadMinutes: t.leadMinutes } : {}),
+        ...(t.allDay !== undefined ? { allDay: t.allDay } : {}),
+        ...(t.list !== undefined ? { list: t.list } : {}),
         ...(t.originalText !== undefined
           ? { originalText: t.originalText }
           : {}),
@@ -258,6 +264,8 @@ export class TaskController {
       ...(dto.leadMinutes !== undefined
         ? { leadMinutes: dto.leadMinutes }
         : {}),
+      ...(dto.allDay !== undefined ? { allDay: dto.allDay } : {}),
+      ...(dto.list !== undefined ? { list: dto.list } : {}),
     });
     return toTaskWire(updated);
   }

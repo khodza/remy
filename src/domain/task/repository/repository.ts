@@ -5,6 +5,7 @@ import {
   TaskStatus,
   ClaimedReminder,
   TaskFilter,
+  ListSummary,
 } from './types';
 
 export interface TaskRepository {
@@ -13,6 +14,10 @@ export interface TaskRepository {
   findByUserId(userId: string, status?: TaskStatus): Promise<Task[]>;
   /** Filtered, sorted, optionally limited query used by the Mini App views. */
   find(filter: TaskFilter): Promise<Task[]>;
+  /** The user's named lists (non-deleted tasks), by name. */
+  listSummaries(userId: string): Promise<ListSummary[]>;
+  /** Hard-deletes every task of the user ("delete all my data"); returns how many. */
+  deleteAllForUser(userId: string): Promise<number>;
   /** Removes a deleted category from every task of the user that carries it. */
   clearCategory(userId: string, categoryId: string): Promise<void>;
   /**

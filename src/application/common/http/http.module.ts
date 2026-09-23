@@ -18,6 +18,7 @@ import { SettingsController } from './controllers/settings.controller';
 import { CategoryController } from './controllers/category.controller';
 import { CalendarController } from './controllers/calendar.controller';
 import { ExportController } from './controllers/export.controller';
+import { ListController } from './controllers/list.controller';
 import { DataModule } from '../data/data.module';
 import { getEnv } from '@common/config';
 import { GetSettingsUsecase, UpdateSettingsUsecase } from '@usecases/settings';
@@ -57,6 +58,7 @@ import {
     CategoryController,
     CalendarController,
     ExportController,
+    ListController,
     HealthController,
   ],
   providers: [

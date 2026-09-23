@@ -41,6 +41,8 @@ describe('CreateStructuredTaskUsecase', () => {
       priority: 'high',
       categoryId: null,
       leadMinutes: 30,
+      allDay: false,
+      list: null,
       source: {
         type: 'miniapp',
         originalText: 'call mom tomorrow at 5 every week',
@@ -62,7 +64,28 @@ describe('CreateStructuredTaskUsecase', () => {
     );
   });
 
+  it('an all-day task moves to 09:00 on its local date; lists are normalised', async () => {
+    await usecase.execute({
+      ...base,
+      description: 'Mom birthday',
+      // 23:00 on 17 Sep in Tashkent (UTC+5).
+      scheduledAt: new Date('2026-09-17T18:00:00Z'),
+      allDay: true,
+      list: '  My Family List ',
+      sourceType: 'voice',
+    });
+    expect(tasks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduledAt: new Date('2026-09-17T04:00:00Z'),
+        allDay: true,
+        list: 'family',
+        source: expect.objectContaining({ type: 'voice' }),
+      }),
+    );
+  });
+
   it.each([
+    ['an all-day todo', { description: 'x', allDay: true }],
     [
       'a recurring todo',
       { description: 'x', recurrence: { type: 'daily' as const } },

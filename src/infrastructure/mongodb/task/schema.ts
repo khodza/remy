@@ -58,6 +58,8 @@ export const TaskSchema = new Schema<TaskDocument>(
     // Not `required`: a todo has no time.
     scheduled_at: { type: Date, default: null, index: true },
     timezone: { type: String, required: false },
+    all_day: { type: Boolean, default: false },
+    list: { type: String, default: null },
     snoozed_until: { type: Date, required: false, default: null },
     next_fire_at: { type: Date, required: false, default: null },
     next_attempt_at: { type: Date, required: false, default: null },
@@ -84,6 +86,8 @@ export const TaskSchema = new Schema<TaskDocument>(
     completed_at: { type: Date, default: null },
     completions: { type: [CompletionSchema], default: [] },
     last_sent_at: { type: Date, required: false, default: null },
+    // Set while status is 'deleted'; Mongo purges the task 30 days later.
+    deleted_at: { type: Date, default: null },
   },
   {
     versionKey: false,
@@ -100,3 +104,13 @@ TaskSchema.index({ status: 1, scheduled_at: 1 });
 // scheduler's internal fire time (a heads-up or a nudge).
 TaskSchema.index({ user_id: 1, status: 1, due_at: 1 });
 TaskSchema.index({ user_id: 1, status: 1, completed_at: -1 });
+// Named lists: GET /tasks?list= and GET /lists.
+TaskSchema.index({ user_id: 1, list: 1 });
+/** Soft-deleted tasks are purged this long after the delete (B29). */
+export const DELETED_TASK_TTL_SECONDS = 30 * 24 * 60 * 60;
+// TTL: only documents whose deleted_at is a date expire; null never does,
+// and restoring a task (Undo) clears it.
+TaskSchema.index(
+  { deleted_at: 1 },
+  { expireAfterSeconds: DELETED_TASK_TTL_SECONDS },
+);
