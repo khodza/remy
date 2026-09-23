@@ -1,4 +1,5 @@
 import { formatInTimeZone } from 'date-fns-tz';
+import { seriesEnd } from './recurrence';
 import {
   TaskStatus,
   type Priority,
@@ -67,8 +68,12 @@ const utcStamp = (date: Date) =>
 const localStamp = (date: Date, tz: string) =>
   formatInTimeZone(date, tz, "yyyyMMdd'T'HHmmss");
 
-/** RRULE value for a series, or null when iCal can't say it. */
-export function toRRule(recurrence: Recurrence): string {
+/**
+ * RRULE value for a series. A "× N times" series is written as UNTIL its
+ * last occurrence: DTSTART is the current occurrence, not the first, so a
+ * COUNT would over-count.
+ */
+export function toRRule(recurrence: Recurrence, timezone = 'UTC'): string {
   const n = Math.max(1, Math.floor(recurrence.interval ?? 1));
   const interval = n > 1 ? `;INTERVAL=${n}` : '';
   let rule: string;
@@ -99,9 +104,8 @@ export function toRRule(recurrence: Recurrence): string {
       break;
     }
   }
-  return recurrence.until
-    ? `${rule};UNTIL=${utcStamp(recurrence.until)}`
-    : rule;
+  const end = seriesEnd(recurrence, timezone);
+  return end ? `${rule};UNTIL=${utcStamp(end)}` : rule;
 }
 
 function eventLines(
@@ -157,7 +161,9 @@ export function buildCalendar(input: CalendarInput): string {
       continue;
     }
     lines.push(
-      ...eventLines(task, series, input, [`RRULE:${toRRule(task.recurrence)}`]),
+      ...eventLines(task, series, input, [
+        `RRULE:${toRRule(task.recurrence, task.timezone)}`,
+      ]),
     );
     // A snoozed occurrence: override just that date, the series stays.
     if (task.snoozedUntil) {

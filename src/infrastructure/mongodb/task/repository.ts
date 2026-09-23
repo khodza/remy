@@ -460,6 +460,7 @@ function recurrenceToSubdoc(
   if (recurrence.lastDayOfMonth !== undefined)
     doc.lastDayOfMonth = recurrence.lastDayOfMonth;
   if (recurrence.until !== undefined) doc.until = recurrence.until;
+  if (recurrence.count !== undefined) doc.count = recurrence.count;
   if (recurrence.anchorAt !== undefined) doc.anchorAt = recurrence.anchorAt;
   return doc;
 }
@@ -477,6 +478,7 @@ function subdocToRecurrence(
     recurrence.byWeekday = [...subdoc.byWeekday];
   if (subdoc.lastDayOfMonth === true) recurrence.lastDayOfMonth = true;
   if (subdoc.until instanceof Date) recurrence.until = subdoc.until;
+  if (typeof subdoc.count === 'number') recurrence.count = subdoc.count;
   if (subdoc.anchorAt instanceof Date) recurrence.anchorAt = subdoc.anchorAt;
   return recurrence;
 }

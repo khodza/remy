@@ -30,6 +30,15 @@ describe('ical', () => {
       { type: 'daily', until: new Date('2026-12-31T19:00:00Z') },
       'FREQ=DAILY;UNTIL=20261231T190000Z',
     ],
+    // × 3 from the anchor: UNTIL the third occurrence (DTSTART may be later).
+    [
+      {
+        type: 'daily',
+        count: 3,
+        anchorAt: new Date('2026-09-16T09:00:00Z'),
+      },
+      'FREQ=DAILY;UNTIL=20260918T090000Z',
+    ],
   ] as const)('RRULE for %j', (recurrence, rule) => {
     expect(toRRule(recurrence as never)).toBe(rule);
   });

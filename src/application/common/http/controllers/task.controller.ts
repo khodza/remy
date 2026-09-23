@@ -33,6 +33,7 @@ import {
   ProcessTextMessageUsecase,
   ProcessVoiceMessageUsecase,
   ReopenTaskUsecase,
+  SkipOccurrenceUsecase,
   SnoozeTaskUsecase,
   UpdateTaskUsecase,
 } from '@usecases/task';
@@ -45,6 +46,7 @@ import {
   ListTasksQuery,
   SnoozeTaskRequest,
   UpdateTaskRequest,
+  type CompleteResultWire,
   type DeleteResult,
   type TaskWire,
 } from '@contract/remy-contract';
@@ -76,6 +78,7 @@ export class TaskController {
     private readonly delayTaskUsecase: DelayTaskUsecase,
     private readonly snoozeTaskUsecase: SnoozeTaskUsecase,
     private readonly deleteTaskUsecase: DeleteTaskUsecase,
+    private readonly skipOccurrenceUsecase: SkipOccurrenceUsecase,
   ) {}
 
   @Get()
@@ -263,9 +266,22 @@ export class TaskController {
   async complete(
     @CurrentUser() auth: AuthContext,
     @Param('id', ParseObjectIdPipe) id: string,
+  ): Promise<CompleteResultWire> {
+    await this.requireOwnedTask(id, auth.userId);
+    const { alreadyDone, ...task } = await this.markCompleteUsecase.execute({
+      taskId: id,
+    });
+    return { ...toTaskWire(task), alreadyDone };
+  }
+
+  /** "Not this time" on a repeating task: next occurrence, no Done. */
+  @Post(':id/skip')
+  async skip(
+    @CurrentUser() auth: AuthContext,
+    @Param('id', ParseObjectIdPipe) id: string,
   ): Promise<TaskWire> {
     await this.requireOwnedTask(id, auth.userId);
-    return toTaskWire(await this.markCompleteUsecase.execute({ taskId: id }));
+    return toTaskWire(await this.skipOccurrenceUsecase.execute({ taskId: id }));
   }
 
   @Post(':id/reopen')

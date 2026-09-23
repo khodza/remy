@@ -44,6 +44,25 @@ describe('SkipOccurrenceUsecase', () => {
     });
   });
 
+  it('a "× N times" series closes when the skipped occurrence was the last', async () => {
+    const tasks = mockTaskRepository();
+    tasks.findById.mockResolvedValue(
+      makeTask({
+        scheduledAt: new Date('2026-09-17T09:00:00Z'),
+        recurrence: {
+          type: 'daily',
+          count: 2,
+          anchorAt: new Date('2026-09-16T09:00:00Z'),
+        },
+      }),
+    );
+    tasks.update.mockResolvedValue(makeTask());
+    await new SkipOccurrenceUsecase(tasks).execute({ taskId: 'task-1' });
+    expect(tasks.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: TaskStatus.Completed }),
+    );
+  });
+
   it('refuses one-offs and finished tasks', async () => {
     const tasks = mockTaskRepository();
     tasks.findById.mockResolvedValue(makeTask());

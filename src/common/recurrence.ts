@@ -32,15 +32,56 @@ export function computeNextOccurrence(
   now: Date = new Date(),
   timezone = 'UTC',
 ): Date | null {
+  const end = seriesEnd(recurrence, timezone, current);
   let next = advanceOnce(current, recurrence, timezone);
   // Cap the iteration count so a bad config can't hang the server.
   for (let i = 0; i < 1000 && next.getTime() <= now.getTime(); i++) {
+    if (end && next.getTime() > end.getTime()) return null;
     next = advanceOnce(next, recurrence, timezone);
   }
-  if (recurrence.until && next.getTime() > recurrence.until.getTime()) {
+  if (end && next.getTime() > end.getTime()) {
     return null;
   }
   return next;
+}
+
+/** Most occurrences a "× N times" series may have. */
+export const MAX_RECURRENCE_COUNT = 1000;
+
+/**
+ * The last instant the series may occur at: `until`, or the Nth occurrence
+ * of a "× N times" series (counted from the anchor, on the task's wall
+ * clock), whichever is earlier. Null for an open-ended series. `fallback`
+ * stands in for a missing anchor (legacy tasks): the count then starts there.
+ */
+export function seriesEnd(
+  recurrence: Recurrence,
+  timezone = 'UTC',
+  fallbackAnchor?: Date,
+): Date | null {
+  let end = recurrence.until ?? null;
+  const anchor = recurrence.anchorAt ?? fallbackAnchor;
+  if (recurrence.count !== undefined && anchor) {
+    const last = nthOccurrence(anchor, recurrence, recurrence.count, timezone);
+    if (end === null || last.getTime() < end.getTime()) end = last;
+  }
+  return end;
+}
+
+/** Occurrence number `n` (1 = the anchor itself). */
+function nthOccurrence(
+  anchor: Date,
+  recurrence: Recurrence,
+  n: number,
+  timezone: string,
+): Date {
+  const steps = Math.min(
+    Math.max(0, Math.floor(n) - 1),
+    MAX_RECURRENCE_COUNT - 1,
+  );
+  let at = anchor;
+  for (let i = 0; i < steps; i++) at = advanceOnce(at, recurrence, timezone);
+  return at;
 }
 
 /**
@@ -55,11 +96,12 @@ export function computeLatestOccurrence(
   now: Date = new Date(),
   timezone = 'UTC',
 ): Date {
+  const end = seriesEnd(recurrence, timezone, current);
   let latest = current;
   for (let i = 0; i < 1000; i++) {
     const next = advanceOnce(latest, recurrence, timezone);
     if (next.getTime() > now.getTime()) break;
-    if (recurrence.until && next.getTime() > recurrence.until.getTime()) break;
+    if (end && next.getTime() > end.getTime()) break;
     latest = next;
   }
   return latest;
@@ -118,6 +160,9 @@ export function describeRecurrence(
       label = d === 1 ? 'every day' : `every ${d} days`;
       break;
     }
+  }
+  if (recurrence.count !== undefined) {
+    label += recurrence.count === 1 ? ', once' : `, ${recurrence.count} times`;
   }
   if (recurrence.until) {
     label += ` until ${formatInTimeZone(recurrence.until, timezone, 'd MMM yyyy')}`;

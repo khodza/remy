@@ -7,6 +7,7 @@ export type RecurrenceSubdoc = {
   byWeekday?: number[];
   lastDayOfMonth?: boolean;
   until?: Date;
+  count?: number;
   anchorAt?: Date;
 };
 

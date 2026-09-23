@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '2.3.0';
+export const CONTRACT_VERSION = '2.4.0';
 
 // ---------------------------------------------------------------- enums ---
 
@@ -85,11 +85,27 @@ function buildRecurrence<D extends z.ZodType>(date: D) {
     lastDayOfMonth: z.boolean().optional(),
     /** The series ends after this instant; the last Done completes the task. */
     until: date.optional(),
+    /**
+     * "× N times": the series has N occurrences in all, counted from its
+     * first one (done and skipped ones both count). With `until` too,
+     * whichever ends it first wins. Changing the time re-anchors the series,
+     * which starts the count again.
+     */
+    count: z.number().int().min(1).max(1000).optional(),
   });
 }
 
-/** Recurrence as sent in requests and on the wire (until is an ISO string). */
-export const Recurrence = buildRecurrence(IsoInstant);
+/**
+ * Recurrence as sent in requests and on the wire (until is an ISO string).
+ * Requests may set intervalDays only on every_n_days.
+ */
+export const Recurrence = buildRecurrence(IsoInstant).refine(
+  (r) => r.intervalDays === undefined || r.type === 'every_n_days',
+  {
+    message: 'intervalDays is only allowed with type every_n_days',
+    path: ['intervalDays'],
+  },
+);
 export type RecurrenceInput = z.infer<typeof Recurrence>;
 
 export const TaskSource = z.object({
@@ -131,6 +147,13 @@ function buildResponses<D extends z.ZodType>(date: D) {
     completedAt: date.nullable(),
     /** How many occurrences of a recurring task were marked done. */
     completionsCount: z.number().int().nonnegative(),
+    /**
+     * Recent Done taps on a repeating task, newest first: those of the last
+     * 30 days, at most 50 (completionsCount counts them all). `occurrenceAt`
+     * is the occurrence that was done, so a done occurrence can stay on its
+     * day in Today and Week. Empty for one-offs (see completedAt).
+     */
+    completions: z.array(z.object({ at: date, occurrenceAt: date })),
     /** How many times it was snoozed or delayed, ever. */
     snoozeCount: z.number().int().nonnegative(),
     /** pending && nextFireAt < now. Always false for todos. */
@@ -150,6 +173,12 @@ function buildResponses<D extends z.ZodType>(date: D) {
 
   return {
     Task,
+    /**
+     * POST /tasks/:id/complete — the task after Done. `alreadyDone` is true
+     * when nothing changed: a one-off that was already completed, or a
+     * repeating task whose series already sits in the future (a second tap).
+     */
+    CompleteResult: Task.extend({ alreadyDone: z.boolean() }),
     TaskList: z.object({ tasks: z.array(Task) }),
     User,
     AuthResult: z.object({ token: z.string(), expiresAt: date, user: User }),
@@ -183,6 +212,8 @@ export const client = buildResponses(z.coerce.date());
 
 export type Task = z.infer<typeof client.Task>;
 export type TaskWire = z.infer<typeof wire.Task>;
+export type CompleteResult = z.infer<typeof client.CompleteResult>;
+export type CompleteResultWire = z.infer<typeof wire.CompleteResult>;
 export type User = z.infer<typeof client.User>;
 export type AuthResult = z.infer<typeof client.AuthResult>;
 export type ParsedTask = z.infer<typeof client.ParsedTask>;
@@ -443,6 +474,8 @@ export const endpoints = {
   updateTask: { method: 'PATCH', path: '/tasks/:id', auth: 'jwt' },
   completeTask: { method: 'POST', path: '/tasks/:id/complete', auth: 'jwt' },
   reopenTask: { method: 'POST', path: '/tasks/:id/reopen', auth: 'jwt' },
+  /** Repeating tasks only: move on to the next occurrence without Done. */
+  skipOccurrence: { method: 'POST', path: '/tasks/:id/skip', auth: 'jwt' },
   delayTask: { method: 'POST', path: '/tasks/:id/delay', auth: 'jwt' },
   snoozeTask: { method: 'POST', path: '/tasks/:id/snooze', auth: 'jwt' },
   deleteTask: { method: 'DELETE', path: '/tasks/:id', auth: 'jwt' },

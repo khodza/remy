@@ -380,9 +380,14 @@ describe('Remy API (e2e)', () => {
     const done = await authed(
       api().post(`/api/v1/tasks/${created.body.id}/complete`),
     ).expect(201);
-    const after = wire.Task.parse(done.body);
+    const after = wire.CompleteResult.parse(done.body);
     expect(after.status).toBe('pending');
+    expect(after.alreadyDone).toBe(false);
     expect(after.completionsCount).toBe(1);
+    // The done occurrence stays visible to Today (gap 1).
+    expect(after.completions).toEqual([
+      { at: expect.any(String), occurrenceAt: dueAt.toISOString() },
+    ]);
     expect(new Date(after.scheduledAt!).getTime()).toBe(
       dueAt.getTime() + 24 * 60 * 60 * 1000,
     );
@@ -391,8 +396,72 @@ describe('Remy API (e2e)', () => {
     const again = await authed(
       api().post(`/api/v1/tasks/${created.body.id}/complete`),
     ).expect(201);
-    expect(wire.Task.parse(again.body).scheduledAt).toBe(after.scheduledAt);
-    expect(again.body.completionsCount).toBe(1);
+    expect(wire.CompleteResult.parse(again.body)).toMatchObject({
+      scheduledAt: after.scheduledAt,
+      completionsCount: 1,
+      alreadyDone: true,
+    });
+
+    // A one-off cannot skip.
+    await authed(api().post(`/api/v1/tasks/${reminderId}/skip`)).expect(201);
+    const oneOff = await authed(api().post('/api/v1/tasks/structured'))
+      .send({ description: 'Once', scheduledAt: dueAt.toISOString() })
+      .expect(201);
+    await authed(api().post(`/api/v1/tasks/${oneOff.body.id}/skip`)).expect(
+      400,
+    );
+  });
+
+  it('"× N times": count round-trips and ends the series; intervalDays only on every_n_days', async () => {
+    const first = new Date(Date.now() - 60 * 60 * 1000);
+    const created = await authed(api().post('/api/v1/tasks/structured'))
+      .send({
+        description: 'Antibiotics',
+        scheduledAt: first.toISOString(),
+        recurrence: { type: 'daily', count: 2 },
+      })
+      .expect(201);
+    const task = wire.Task.parse(created.body);
+    expect(task.recurrence).toEqual({ type: 'daily', count: 2 });
+
+    // Snoozing moves only this occurrence; it does not use one up.
+    await authed(api().post(`/api/v1/tasks/${task.id}/delay`))
+      .send({ minutes: 10 })
+      .expect(201);
+    const second = wire.Task.parse(
+      (
+        await authed(api().post(`/api/v1/tasks/${task.id}/complete`)).expect(
+          201,
+        )
+      ).body,
+    );
+    expect(second.status).toBe('pending');
+    expect(second.snoozedUntil).toBeNull();
+    // Done early on the second (last) occurrence is a stale tap: no-op…
+    // …so skip it instead, which closes the series.
+    const closed = wire.Task.parse(
+      (await authed(api().post(`/api/v1/tasks/${task.id}/skip`)).expect(201))
+        .body,
+    );
+    expect(closed.status).toBe('completed');
+
+    await authed(api().post('/api/v1/tasks/structured'))
+      .send({
+        description: 'x',
+        scheduledAt: first.toISOString(),
+        recurrence: { type: 'daily', intervalDays: 3 },
+      })
+      .expect(400);
+    await authed(api().post('/api/v1/tasks/structured'))
+      .send({
+        description: 'x',
+        scheduledAt: first.toISOString(),
+        recurrence: { type: 'daily', count: 0 },
+      })
+      .expect(400);
+    await authed(api().patch(`/api/v1/tasks/${reminderId}`))
+      .send({ recurrence: { type: 'weekly', intervalDays: 2 } })
+      .expect(400);
   });
 
   it('deleting a category uncategorises its tasks', async () => {

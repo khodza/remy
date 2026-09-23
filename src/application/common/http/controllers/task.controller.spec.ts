@@ -12,6 +12,7 @@ import type {
   ProcessTextMessageUsecase,
   ProcessVoiceMessageUsecase,
   ReopenTaskUsecase,
+  SkipOccurrenceUsecase,
   SnoozeTaskUsecase,
   UpdateTaskUsecase,
 } from '@usecases/task';
@@ -51,6 +52,7 @@ describe('TaskController', () => {
   let delayTask: Exec<DelayTaskUsecase>;
   let snoozeTask: Exec<SnoozeTaskUsecase>;
   let deleteTask: Exec<DeleteTaskUsecase>;
+  let skipOccurrence: Exec<SkipOccurrenceUsecase>;
   let controller: TaskController;
 
   beforeEach(() => {
@@ -75,6 +77,7 @@ describe('TaskController', () => {
     delayTask = { execute: jest.fn() };
     snoozeTask = { execute: jest.fn() };
     deleteTask = { execute: jest.fn() };
+    skipOccurrence = { execute: jest.fn() };
 
     controller = new TaskController(
       taskRepository,
@@ -90,6 +93,7 @@ describe('TaskController', () => {
       delayTask as unknown as DelayTaskUsecase,
       snoozeTask as unknown as SnoozeTaskUsecase,
       deleteTask as unknown as DeleteTaskUsecase,
+      skipOccurrence as unknown as SkipOccurrenceUsecase,
     );
   });
 
@@ -249,7 +253,56 @@ describe('TaskController', () => {
       const dto = await controller.complete(auth, id);
       expect(markComplete.execute).toHaveBeenCalledWith({ taskId: id });
       expect(dto.status).toBe(TaskStatus.Completed);
+      expect(wire.CompleteResult.parse(dto).alreadyDone).toBe(false);
+    });
+
+    it('complete passes alreadyDone on (a second tap changes nothing)', async () => {
+      markComplete.execute.mockResolvedValue({
+        ...ownedTask,
+        alreadyDone: true,
+      });
+      const dto = await controller.complete(auth, id);
+      expect(wire.CompleteResult.parse(dto)).toMatchObject({
+        id,
+        alreadyDone: true,
+      });
+    });
+
+    it('skip moves a repeating task on through SkipOccurrenceUsecase', async () => {
+      skipOccurrence.execute.mockResolvedValue(ownedTask);
+      const dto = await controller.skip(auth, id);
+      expect(skipOccurrence.execute).toHaveBeenCalledWith({ taskId: id });
       expect(() => wire.Task.parse(dto)).not.toThrow();
+      taskRepository.findById.mockResolvedValue(ownedTask);
+      await expect(controller.skip(foreignAuth, id)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('carries the recent completions, newest first, and drops old ones', async () => {
+      const now = new Date();
+      const daysAgo = (d: number) => new Date(now.getTime() - d * 86_400_000);
+      taskRepository.findById.mockResolvedValue({
+        ...ownedTask,
+        recurrence: { type: 'daily' },
+        completions: [
+          { at: daysAgo(40), occurrenceAt: daysAgo(40) },
+          { at: daysAgo(2), occurrenceAt: daysAgo(2) },
+          { at: daysAgo(1), occurrenceAt: daysAgo(1) },
+        ],
+      });
+      const dto = wire.Task.parse(await controller.getOne(auth, id));
+      expect(dto.completionsCount).toBe(3);
+      expect(dto.completions).toEqual([
+        {
+          at: daysAgo(1).toISOString(),
+          occurrenceAt: daysAgo(1).toISOString(),
+        },
+        {
+          at: daysAgo(2).toISOString(),
+          occurrenceAt: daysAgo(2).toISOString(),
+        },
+      ]);
     });
 
     it('update forwards only the fields that were sent, null included', async () => {

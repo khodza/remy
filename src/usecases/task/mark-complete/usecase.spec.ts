@@ -173,6 +173,29 @@ describe('MarkCompleteUsecase', () => {
     expect(called?.scheduledAt).toEqual(new Date('2026-04-29T09:00:00Z'));
   });
 
+  it('the last Done of a "× N times" series completes it', async () => {
+    const task = makeTask({
+      scheduledAt: new Date('2026-04-16T09:00:00Z'),
+      recurrence: {
+        type: 'daily',
+        count: 3,
+        anchorAt: new Date('2026-04-14T09:00:00Z'),
+      },
+    });
+    taskRepository.findById.mockResolvedValue(task);
+    taskRepository.update.mockResolvedValue(task);
+
+    await usecase.execute({ taskId: 'task-1' });
+
+    expect(taskRepository.update).toHaveBeenCalledWith({
+      id: 'task-1',
+      status: TaskStatus.Completed,
+      completedAt: now,
+      snoozedUntil: null,
+      pushCompletion: { at: now, occurrenceAt: task.scheduledAt },
+    });
+  });
+
   it('completes a todo (no time) like a one-shot task', async () => {
     const todo = makeTask({ scheduledAt: null });
     taskRepository.findById.mockResolvedValue(todo);

@@ -21,6 +21,7 @@ const RecurrenceSchema = new Schema(
     byWeekday: { type: [Number], required: false, default: undefined },
     lastDayOfMonth: { type: Boolean, required: false },
     until: { type: Date, required: false },
+    count: { type: Number, required: false, min: 1 },
     anchorAt: { type: Date, required: false },
   },
   { _id: false },

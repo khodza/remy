@@ -2,6 +2,7 @@ import {
   computeLatestOccurrence,
   computeNextOccurrence,
   describeRecurrence,
+  seriesEnd,
 } from './recurrence';
 
 describe('describeRecurrence', () => {
@@ -247,5 +248,86 @@ describe('computeLatestOccurrence', () => {
   it('lands exactly on now when an occurrence coincides with it', () => {
     const now = new Date('2026-09-19T09:00:00Z');
     expect(computeLatestOccurrence(base, { type: 'daily' }, now)).toEqual(now);
+  });
+});
+
+describe('count ("× N times")', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('ends the series after N occurrences counted from the anchor', () => {
+    const first = at('2026-09-16T09:00:00Z');
+    const rule = { type: 'daily' as const, count: 3, anchorAt: first };
+    const second = computeNextOccurrence(first, rule, first)!;
+    const third = computeNextOccurrence(second, rule, second)!;
+    expect([second, third]).toEqual([
+      at('2026-09-17T09:00:00Z'),
+      at('2026-09-18T09:00:00Z'),
+    ]);
+    expect(computeNextOccurrence(third, rule, third)).toBeNull();
+    expect(seriesEnd(rule)).toEqual(third);
+  });
+
+  it('count 1 is a series with a single occurrence', () => {
+    const first = at('2026-09-16T09:00:00Z');
+    const rule = { type: 'weekly' as const, count: 1, anchorAt: first };
+    expect(computeNextOccurrence(first, rule, first)).toBeNull();
+  });
+
+  it('catching up never runs past the last occurrence', () => {
+    const first = at('2026-09-16T09:00:00Z');
+    const rule = { type: 'daily' as const, count: 5, anchorAt: first };
+    // Ignored for weeks: done/skip closes the series, rollover stops at #5.
+    const late = at('2026-10-10T00:00:00Z');
+    expect(computeNextOccurrence(first, rule, late)).toBeNull();
+    expect(computeLatestOccurrence(first, rule, late)).toEqual(
+      at('2026-09-20T09:00:00Z'),
+    );
+  });
+
+  it('with until as well, whichever comes first ends it', () => {
+    const first = at('2026-09-16T09:00:00Z');
+    const early = {
+      type: 'daily' as const,
+      count: 10,
+      until: at('2026-09-17T23:00:00Z'),
+      anchorAt: first,
+    };
+    expect(seriesEnd(early)).toEqual(at('2026-09-17T23:00:00Z'));
+    const late = { ...early, count: 2, until: at('2026-12-31T00:00:00Z') };
+    expect(seriesEnd(late)).toEqual(at('2026-09-17T09:00:00Z'));
+  });
+
+  it('counts on the wall clock across a DST switch (Europe/Berlin, 25 Oct 2026)', () => {
+    const tz = 'Europe/Berlin';
+    // 09:00 CEST on Fri 23 Oct = 07:00Z; the clocks go back on Sun 25 Oct.
+    const first = at('2026-10-23T07:00:00Z');
+    const rule = { type: 'daily' as const, count: 4, anchorAt: first };
+    // #4 is Mon 26 Oct 09:00 CET = 08:00Z.
+    expect(seriesEnd(rule, tz)).toEqual(at('2026-10-26T08:00:00Z'));
+    const fourth = computeLatestOccurrence(
+      first,
+      rule,
+      at('2026-11-30T00:00:00Z'),
+      tz,
+    );
+    expect(fourth).toEqual(at('2026-10-26T08:00:00Z'));
+    expect(computeNextOccurrence(fourth, rule, fourth, tz)).toBeNull();
+  });
+
+  it('legacy tasks without an anchor count from the current occurrence', () => {
+    const current = at('2026-09-16T09:00:00Z');
+    const rule = { type: 'daily' as const, count: 2 };
+    expect(computeNextOccurrence(current, rule, current)).toEqual(
+      at('2026-09-17T09:00:00Z'),
+    );
+  });
+
+  it('is described', () => {
+    expect(describeRecurrence({ type: 'daily', count: 10 })).toBe(
+      'every day, 10 times',
+    );
+    expect(describeRecurrence({ type: 'weekly', count: 1 })).toBe(
+      'every week, once',
+    );
   });
 });

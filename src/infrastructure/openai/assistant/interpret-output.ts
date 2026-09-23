@@ -398,8 +398,8 @@ function alignFirstOccurrence(
     }
   }
   if (first.getTime() > now.getTime()) return first;
-  // Ignore `until` here: a series that starts late still starts.
-  const { until: _until, ...open } = recurrence;
+  // Ignore `until` / `count` here: a series that starts late still starts.
+  const { until: _until, count: _count, ...open } = recurrence;
   return (
     computeNextOccurrence(first, { ...open, anchorAt: first }, now, timezone) ??
     first

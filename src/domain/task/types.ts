@@ -28,6 +28,12 @@ export type Recurrence = {
   /** The series ends after this instant. */
   until?: Date;
   /**
+   * "× N times": the series has this many occurrences, counted from
+   * `anchorAt` (the first one). Skipped and done occurrences both count.
+   * With `until` as well, whichever ends the series first wins.
+   */
+  count?: number;
+  /**
    * The occurrence the series was defined from. Never moved by snoozes or
    * by advancing; used to keep "monthly on the 31st" on the 31st after a
    * short month. Missing on tasks created before this field existed.

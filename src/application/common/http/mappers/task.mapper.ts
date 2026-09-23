@@ -2,6 +2,10 @@ import type { Recurrence, Task } from '@domain/task';
 import { effectiveDueAt } from '@common/fire-time';
 import type { RecurrenceInput, TaskWire } from '@contract/remy-contract';
 
+/** Completions the wire carries: the last 30 days, newest first, at most 50. */
+export const RECENT_COMPLETIONS_DAYS = 30;
+export const RECENT_COMPLETIONS_MAX = 50;
+
 /** Domain task → the wire shape defined by the contract. */
 export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
   const dueAt = effectiveDueAt(task);
@@ -30,6 +34,7 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
     },
     completedAt: task.completedAt ? task.completedAt.toISOString() : null,
     completionsCount: task.completions.length,
+    completions: recentCompletions(task, now),
     snoozeCount: task.snoozeCount,
     isOverdue:
       task.status === 'pending' &&
@@ -40,11 +45,25 @@ export function toTaskWire(task: Task, now: Date = new Date()): TaskWire {
   };
 }
 
+function recentCompletions(task: Task, now: Date): TaskWire['completions'] {
+  const since = now.getTime() - RECENT_COMPLETIONS_DAYS * 24 * 60 * 60 * 1000;
+  return task.completions
+    .filter((c) => c.at.getTime() >= since)
+    .sort((a, b) => b.at.getTime() - a.at.getTime())
+    .slice(0, RECENT_COMPLETIONS_MAX)
+    .map((c) => ({
+      at: c.at.toISOString(),
+      occurrenceAt: c.occurrenceAt.toISOString(),
+    }));
+}
+
 /** Domain recurrence → wire (the anchor is internal and never leaves the server). */
 export function recurrenceToWire(recurrence: Recurrence): RecurrenceInput {
   return {
     type: recurrence.type,
-    ...(recurrence.intervalDays !== undefined
+    // Only every_n_days has an interval in days (legacy rows may carry one).
+    ...(recurrence.type === 'every_n_days' &&
+    recurrence.intervalDays !== undefined
       ? { intervalDays: recurrence.intervalDays }
       : {}),
     ...(recurrence.interval !== undefined
@@ -57,6 +76,7 @@ export function recurrenceToWire(recurrence: Recurrence): RecurrenceInput {
     ...(recurrence.until !== undefined
       ? { until: recurrence.until.toISOString() }
       : {}),
+    ...(recurrence.count !== undefined ? { count: recurrence.count } : {}),
   };
 }
 
@@ -75,5 +95,6 @@ export function recurrenceFromWire(
       : {}),
     ...(input.lastDayOfMonth ? { lastDayOfMonth: true } : {}),
     ...(input.until !== undefined ? { until: new Date(input.until) } : {}),
+    ...(input.count !== undefined ? { count: input.count } : {}),
   };
 }

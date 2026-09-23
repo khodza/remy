@@ -60,7 +60,7 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
         priority: 'high',
         categoryId: 'a'.repeat(24),
         leadMinutes: 30,
-        recurrence: { type: 'monthly', anchorAt: past },
+        recurrence: { type: 'monthly', count: 12, anchorAt: past },
       }),
     );
     const found = await repo.findById(created.id);
@@ -75,7 +75,7 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
       // leadMinutes 30 → the scheduler fires the heads-up first.
       nextFireAt: new Date('2026-04-16T09:30:00Z'),
       snoozedUntil: null,
-      recurrence: { type: 'monthly', anchorAt: past },
+      recurrence: { type: 'monthly', count: 12, anchorAt: past },
       source: {
         type: 'text',
         originalText: 'x',
