@@ -19,7 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ParseObjectIdPipe } from '@nestjs/mongoose';
 import { Throttle } from '@nestjs/throttler';
 import { Domain } from '@common/tokens';
-import { getEnv } from '@common/config';
+import { userZone } from '@common/user-zone';
 import type { Task, TaskRepository } from '@domain/task';
 import { TaskNotFoundError } from '@domain/task';
 import type { User, UserRepository } from '@domain/user';
@@ -91,7 +91,7 @@ export class TaskController {
       userId: auth.userId,
       view: query.view ?? 'all',
       includeCompleted: query.includeCompleted === 'true',
-      timezone: zoneOf(user),
+      timezone: userZone(user),
       ...(query.limit !== undefined ? { limit: query.limit } : {}),
       ...(query.list !== undefined ? { list: query.list } : {}),
       ...(query.q !== undefined ? { search: query.q } : {}),
@@ -116,14 +116,15 @@ export class TaskController {
     dto: CreateTaskFromTextRequest,
   ): Promise<TaskWire> {
     const user = await this.requireUser(auth.userId);
-    const result = await this.processTextMessageUsecase.execute({
+    const { tasks } = await this.processTextMessageUsecase.execute({
       userId: user.id,
       telegramChatId: user.telegramUserId,
       text: dto.text,
-      userTimezone: zoneOf(user),
-      source: { type: 'miniapp' },
+      timezone: userZone(user),
+      sourceType: 'miniapp',
     });
-    return toTaskWire(await this.requireTask(result.taskId));
+    // Everything the text held was saved; the first one answers.
+    return toTaskWire(tasks[0]!);
   }
 
   @Post('structured')
@@ -136,7 +137,7 @@ export class TaskController {
     const task = await this.createStructuredTaskUsecase.execute({
       userId: user.id,
       telegramChatId: user.telegramUserId,
-      timezone: zoneOf(user),
+      timezone: userZone(user),
       description: dto.description,
       ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
       scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
@@ -222,15 +223,15 @@ export class TaskController {
     }
 
     const user = await this.requireUser(auth.userId);
-    const result = await this.processVoiceMessageUsecase.execute({
+    const { tasks } = await this.processVoiceMessageUsecase.execute({
       userId: user.id,
       telegramChatId: user.telegramUserId,
       audioFileBuffer: file.buffer,
       mimeType: mime,
-      userTimezone: zoneOf(user),
+      timezone: userZone(user),
       sourceType: 'miniapp',
     });
-    return toTaskWire(await this.requireTask(result.taskId));
+    return toTaskWire(tasks[0]!);
   }
 
   @Patch(':id')
@@ -364,8 +365,4 @@ export class TaskController {
     }
     return task;
   }
-}
-
-function zoneOf(user: Pick<User, 'timezone'>): string {
-  return user.timezone ?? getEnv().OWNER_TIMEZONE ?? 'UTC';
 }

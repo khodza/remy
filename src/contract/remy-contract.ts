@@ -170,6 +170,22 @@ function buildResponses<D extends z.ZodType>(date: D) {
     updatedAt: date,
   });
 
+  /** A task read from text, before it is saved (POST /ai/parse, /ai/parse-list). */
+  const TaskDraft = z.object({
+    description: z.string(),
+    notes: z.string().nullable(),
+    /** Null = no time given → a todo in the Inbox. */
+    scheduledAt: date.nullable(),
+    /** A date with no time (false for todos). */
+    allDay: z.boolean(),
+    recurrence: RecurrenceOut.nullable(),
+    priority: Priority,
+    categoryId: z.string().nullable(),
+    leadMinutes: z.number().int().positive().nullable(),
+    /** Named list, normalised; null if none. */
+    list: z.string().nullable(),
+  });
+
   const User = z.object({
     id: z.string(),
     telegramUserId: z.number(),
@@ -181,6 +197,7 @@ function buildResponses<D extends z.ZodType>(date: D) {
 
   return {
     Task,
+    TaskDraft,
     /**
      * POST /tasks/:id/complete — the task after Done. `alreadyDone` is true
      * when nothing changed: a one-off that was already completed, or a
@@ -190,26 +207,16 @@ function buildResponses<D extends z.ZodType>(date: D) {
     TaskList: z.object({ tasks: z.array(Task) }),
     User,
     AuthResult: z.object({ token: z.string(), expiresAt: date, user: User }),
-    ParsedTask: z.object({
-      description: z.string(),
-      scheduledAt: date,
-      recurrence: RecurrenceOut.nullable(),
-    }),
+    /**
+     * POST /ai/parse — what the text holds, for review; nothing is saved.
+     * The fields are the first task (a TaskDraft); `drafts` lists every task
+     * the text held (usually one, first included). scheduledAt null = no
+     * time → Inbox todo. A text that holds no new task (chat, garbage, a
+     * time that already passed) is a 422 whose message says why.
+     */
+    ParsedTask: TaskDraft.extend({ drafts: z.array(TaskDraft).min(1) }),
     /** POST /ai/parse-list — one reviewable draft per task in the list. */
-    ImportDrafts: z.object({
-      tasks: z.array(
-        z.object({
-          description: z.string(),
-          notes: z.string().nullable(),
-          /** Null = no time given → a todo in the Inbox. */
-          scheduledAt: date.nullable(),
-          recurrence: RecurrenceOut.nullable(),
-          priority: Priority,
-          categoryId: z.string().nullable(),
-          leadMinutes: z.number().int().positive().nullable(),
-        }),
-      ),
-    }),
+    ImportDrafts: z.object({ tasks: z.array(TaskDraft) }),
   };
 }
 
@@ -225,6 +232,8 @@ export type CompleteResultWire = z.infer<typeof wire.CompleteResult>;
 export type User = z.infer<typeof client.User>;
 export type AuthResult = z.infer<typeof client.AuthResult>;
 export type ParsedTask = z.infer<typeof client.ParsedTask>;
+export type ParsedTaskWire = z.infer<typeof wire.ParsedTask>;
+export type TaskDraftWire = z.infer<typeof wire.TaskDraft>;
 export type ImportDrafts = z.infer<typeof client.ImportDrafts>;
 export type ImportDraftsWire = z.infer<typeof wire.ImportDrafts>;
 export type ImportDraft = ImportDrafts['tasks'][number];
@@ -341,7 +350,12 @@ const LeadMinutes = z.number().int().min(1).max(10080);
  */
 const ListName = z.string().trim().max(40);
 
-/** POST /tasks — natural language; the server parses it. */
+/**
+ * POST /tasks — natural language; the server reads it like POST /ai/parse
+ * and saves every task it holds, answering the first. Not a task (chat,
+ * garbage, a time that already passed) → 422, nothing saved. POST
+ * /tasks/voice behaves the same on the transcript.
+ */
 export const CreateTaskFromTextRequest = z
   .object({ text: Description })
   .strict();

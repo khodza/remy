@@ -1,21 +1,17 @@
+import type { Task } from '@domain/task';
+
 export type ProcessVoiceMessageInput = {
   userId: string;
   telegramChatId: number;
   audioFileBuffer: Buffer;
   mimeType: string;
-  userTimezone?: string;
-  /** 'voice' from the chat (default) or 'miniapp' for an in-app recording. */
+  /** Zone the tasks are created in. */
+  timezone: string;
+  /** 'miniapp' for an in-app recording (default), 'voice' from the chat. */
   sourceType?: 'voice' | 'miniapp';
-  messageId?: number;
 };
 
-import type { Recurrence } from '@domain/task';
-
 export type ProcessVoiceMessageOutput = {
-  taskId: string;
-  description: string;
-  scheduledAt: Date;
-  timezone: string;
-  recurrence: Recurrence | null;
+  tasks: Task[];
   transcribedText: string;
 };

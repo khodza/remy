@@ -1,67 +1,45 @@
-import { Injectable, Inject } from '@nestjs/common';
-import type { TaskRepository } from '@domain/task/repository';
-import type { TaskParserGateway } from '@domain/ai/gateway/task-parser';
-import { Domain } from '@common/tokens';
-import { ProcessTextMessageInput, ProcessTextMessageOutput } from './types';
-import { ApplicationError } from '@domain/error';
-import { FailedToCreateTaskError } from '@domain/task/errors';
+import { Injectable } from '@nestjs/common';
 import { validateText } from '@common/validation';
+import type { Task } from '@domain/task';
+import { ParseTaskUsecase } from '../parse-task';
+import { CreateStructuredTaskUsecase } from '../create-structured-task';
+import { ProcessTextMessageInput, ProcessTextMessageOutput } from './types';
 
+/**
+ * Natural language straight to saved tasks (the Mini App's POST /tasks and
+ * voice). Reads the text exactly like the Create preview does
+ * (ParseTaskUsecase), so a past time, chat or garbage is a NotATaskError and
+ * nothing is saved; then saves every draft as if the user had reviewed it.
+ */
 @Injectable()
 export class ProcessTextMessageUsecase {
   constructor(
-    @Inject(Domain.Task.Repository)
-    private readonly taskRepository: TaskRepository,
-    @Inject(Domain.AI.TaskParserGateway)
-    private readonly taskParserGateway: TaskParserGateway,
+    private readonly parseTask: ParseTaskUsecase,
+    private readonly createStructured: CreateStructuredTaskUsecase,
   ) {}
 
   public async execute(
     input: ProcessTextMessageInput,
   ): Promise<ProcessTextMessageOutput> {
-    try {
-      // Validate input text
-      validateText(input.text);
-
-      // Parse task from text using AI
-      const parsed = await this.taskParserGateway.parse({
-        text: input.text,
-        userTimezone: input.userTimezone,
-      });
-
-      const timezone = input.userTimezone ?? 'UTC';
-      const recurrence = parsed.recurrence
-        ? { ...parsed.recurrence, anchorAt: parsed.scheduledAt }
-        : null;
-
-      const task = await this.taskRepository.create({
-        userId: input.userId,
-        telegramChatId: input.telegramChatId,
-        description: parsed.description,
-        scheduledAt: parsed.scheduledAt,
-        timezone,
-        recurrence,
-        source: {
-          type: input.source?.type ?? 'text',
+    validateText(input.text);
+    const drafts = await this.parseTask.execute({
+      userId: input.userId,
+      text: input.text,
+      ...(input.now ? { now: input.now } : {}),
+    });
+    const tasks: Task[] = [];
+    for (const draft of drafts) {
+      tasks.push(
+        await this.createStructured.execute({
+          ...draft,
+          userId: input.userId,
+          telegramChatId: input.telegramChatId,
+          timezone: input.timezone,
           originalText: input.text,
-          messageId: input.source?.messageId ?? null,
-          forwardedFrom: input.source?.forwardedFrom ?? null,
-        },
-      });
-
-      return {
-        taskId: task.id,
-        description: task.description,
-        scheduledAt: parsed.scheduledAt,
-        timezone: task.timezone,
-        recurrence: task.recurrence ?? null,
-      };
-    } catch (error) {
-      if (error instanceof ApplicationError) throw error;
-      throw new FailedToCreateTaskError(
-        'Failed to process text message',
-        error,
+          sourceType: input.sourceType ?? 'miniapp',
+        }),
       );
     }
+    return { tasks };
   }
 }

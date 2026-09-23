@@ -1,36 +1,24 @@
-import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Domain } from '@common/tokens';
-import type { TaskParserGateway } from '@domain/ai';
-import type { RecurrenceInput } from '@contract/remy-contract';
-import { recurrenceToWire } from '../mappers/task.mapper';
-import type { UserRepository } from '@domain/user';
-import { UserNotFoundError } from '@domain/user';
-import { CurrentUser } from '../decorators/current-user.decorator';
-import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import {
   ParseListRequest,
   ParseTextRequest,
   type ImportDraftsWire,
+  type ParsedTaskWire,
 } from '@contract/remy-contract';
 import { ParseListUsecase } from '@usecases/data';
+import { ParseTaskUsecase } from '@usecases/task';
+import { CurrentUser } from '../decorators/current-user.decorator';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
+import { toDraftWire } from '../mappers/task.mapper';
 import type { AuthContext } from '../types';
-
-export interface ParsedTaskDto {
-  description: string;
-  scheduledAt: string;
-  recurrence: RecurrenceInput | null;
-}
 
 @Controller('ai')
 @UseGuards(JwtAuthGuard)
 export class AiController {
   constructor(
-    @Inject(Domain.AI.TaskParserGateway)
-    private readonly taskParser: TaskParserGateway,
-    @Inject(Domain.User.Repository)
-    private readonly userRepository: UserRepository,
+    private readonly parseTaskUsecase: ParseTaskUsecase,
     private readonly parseListUsecase: ParseListUsecase,
   ) {}
 
@@ -45,41 +33,25 @@ export class AiController {
       userId: auth.userId,
       text: dto.text,
     });
-    return {
-      tasks: drafts.map((d) => ({
-        description: d.description,
-        notes: d.notes,
-        scheduledAt: d.scheduledAt ? d.scheduledAt.toISOString() : null,
-        recurrence: d.recurrence ? recurrenceToWire(d.recurrence) : null,
-        priority: d.priority,
-        categoryId: d.categoryId,
-        leadMinutes: d.leadMinutes,
-      })),
-    };
+    return { tasks: drafts.map(toDraftWire) };
   }
 
+  /**
+   * The Create preview: what the text holds, in the user's zone (OWNER_TIMEZONE
+   * fallback, like every task route). Nothing is saved; not a task → 422.
+   */
   @Post('parse')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async parse(
     @CurrentUser() auth: AuthContext,
     @Body(new ZodValidationPipe(ParseTextRequest)) dto: ParseTextRequest,
-  ): Promise<ParsedTaskDto> {
-    const user = await this.userRepository.findById(auth.userId);
-    if (!user) {
-      throw new UserNotFoundError(`User ${auth.userId} not found`);
-    }
-
-    const result = await this.taskParser.parse({
-      text: dto.text,
-      ...(user.timezone ? { userTimezone: user.timezone } : {}),
-    });
-
-    return {
-      description: result.description,
-      scheduledAt: result.scheduledAt.toISOString(),
-      recurrence: result.recurrence
-        ? recurrenceToWire(result.recurrence)
-        : null,
-    };
+  ): Promise<ParsedTaskWire> {
+    const drafts = (
+      await this.parseTaskUsecase.execute({
+        userId: auth.userId,
+        text: dto.text,
+      })
+    ).map(toDraftWire);
+    return { ...drafts[0]!, drafts };
   }
 }

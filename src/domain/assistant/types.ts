@@ -11,6 +11,10 @@ export type TaskDraft = {
   categoryName: string | null;
   leadMinutes: number | null;
   notes: string | null;
+  /** A date with no time (the interpreter may leave it out: false). */
+  allDay?: boolean;
+  /** A named list the user put it on ("shopping"), raw; null or absent if none. */
+  list?: string | null;
 };
 
 export type QueryRange =

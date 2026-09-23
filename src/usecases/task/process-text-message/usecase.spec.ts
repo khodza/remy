@@ -1,138 +1,92 @@
 import { ProcessTextMessageUsecase } from './usecase';
-import type { TaskRepository } from '@domain/task/repository';
-import type { TaskParserGateway } from '@domain/ai/gateway/task-parser';
+import type { ParseTaskUsecase, ParsedTaskDraft } from '../parse-task';
+import type { CreateStructuredTaskUsecase } from '../create-structured-task';
 import { InvalidInputError } from '@common/errors';
-import { FailedToCreateTaskError } from '@domain/task/errors';
-import { ParsingFailedError } from '@domain/ai/errors';
-
-import { makeTask, mockTaskRepository } from '@test/factories';
+import { NotATaskError } from '@domain/assistant';
+import { makeTask } from '@test/factories';
 
 describe('ProcessTextMessageUsecase', () => {
+  const at = new Date('2026-04-16T15:00:00Z');
+  const draft = (description: string, scheduledAt: Date | null) =>
+    ({
+      description,
+      notes: null,
+      scheduledAt,
+      allDay: false,
+      recurrence: null,
+      priority: 'normal',
+      categoryId: null,
+      leadMinutes: null,
+      list: null,
+    }) satisfies ParsedTaskDraft;
+
+  let parse: jest.Mocked<Pick<ParseTaskUsecase, 'execute'>>;
+  let create: jest.Mocked<Pick<CreateStructuredTaskUsecase, 'execute'>>;
   let usecase: ProcessTextMessageUsecase;
-  let taskRepository: jest.Mocked<TaskRepository>;
-  let taskParserGateway: jest.Mocked<TaskParserGateway>;
-
-  const scheduledAt = new Date('2026-04-16T15:00:00Z');
-
-  const mockTask = makeTask({ scheduledAt });
 
   beforeEach(() => {
-    taskRepository = mockTaskRepository();
-
-    taskParserGateway = {
-      parse: jest.fn(),
+    parse = { execute: jest.fn() };
+    create = {
+      execute: jest.fn(async (input) =>
+        makeTask({
+          description: input.description,
+          scheduledAt: input.scheduledAt ?? null,
+        }),
+      ),
     };
-
-    usecase = new ProcessTextMessageUsecase(taskRepository, taskParserGateway);
-  });
-
-  it('should parse text and create a task', async () => {
-    taskParserGateway.parse.mockResolvedValue({
-      description: 'Buy groceries',
-      scheduledAt,
-      recurrence: null,
-    });
-    taskRepository.create.mockResolvedValue(mockTask);
-
-    const result = await usecase.execute({
-      userId: 'user-1',
-      telegramChatId: 12345,
-      text: 'Buy groceries at 3pm',
-      userTimezone: 'UTC',
-    });
-
-    expect(taskParserGateway.parse).toHaveBeenCalledWith({
-      text: 'Buy groceries at 3pm',
-      userTimezone: 'UTC',
-    });
-    expect(taskRepository.create).toHaveBeenCalledWith({
-      userId: 'user-1',
-      telegramChatId: 12345,
-      description: 'Buy groceries',
-      scheduledAt,
-      timezone: 'UTC',
-      recurrence: null,
-      source: {
-        type: 'text',
-        originalText: 'Buy groceries at 3pm',
-        messageId: null,
-        forwardedFrom: null,
-      },
-    });
-    expect(result).toEqual({
-      taskId: 'task-1',
-      description: 'Buy groceries',
-      scheduledAt,
-      timezone: 'UTC',
-      recurrence: null,
-    });
-  });
-
-  it('stores the user timezone and anchors a recurrence at the first occurrence', async () => {
-    taskParserGateway.parse.mockResolvedValue({
-      description: 'Take vitamins',
-      scheduledAt,
-      recurrence: { type: 'daily' },
-    });
-    taskRepository.create.mockResolvedValue(
-      makeTask({
-        scheduledAt,
-        timezone: 'Asia/Tashkent',
-        recurrence: { type: 'daily', anchorAt: scheduledAt },
-      }),
+    usecase = new ProcessTextMessageUsecase(
+      parse as unknown as ParseTaskUsecase,
+      create as unknown as CreateStructuredTaskUsecase,
     );
-
-    const result = await usecase.execute({
-      userId: 'user-1',
-      telegramChatId: 12345,
-      text: 'take vitamins every day at 9',
-      userTimezone: 'Asia/Tashkent',
-    });
-
-    expect(taskRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timezone: 'Asia/Tashkent',
-        recurrence: { type: 'daily', anchorAt: scheduledAt },
-      }),
-    );
-    expect(result.timezone).toBe('Asia/Tashkent');
   });
 
-  it('should throw InvalidInputError for empty text', async () => {
+  it('saves every draft the text held, with the text as its source', async () => {
+    parse.execute.mockResolvedValue([
+      draft('Dentist', at),
+      draft('Buy milk', null),
+    ]);
+    const { tasks } = await usecase.execute({
+      userId: 'user-1',
+      telegramChatId: 42,
+      text: 'dentist at 8pm and buy milk',
+      timezone: 'Asia/Tashkent',
+    });
+    expect(parse.execute).toHaveBeenCalledWith({
+      userId: 'user-1',
+      text: 'dentist at 8pm and buy milk',
+    });
+    expect(tasks.map((t) => [t.description, t.kind])).toEqual([
+      ['Dentist', 'reminder'],
+      ['Buy milk', 'todo'],
+    ]);
+    expect(create.execute).toHaveBeenCalledWith({
+      ...draft('Dentist', at),
+      userId: 'user-1',
+      telegramChatId: 42,
+      timezone: 'Asia/Tashkent',
+      originalText: 'dentist at 8pm and buy milk',
+      sourceType: 'miniapp',
+    });
+  });
+
+  it('saves nothing when the text is not a task, and rejects empty text', async () => {
+    parse.execute.mockRejectedValue(new NotATaskError('nope'));
     await expect(
       usecase.execute({
         userId: 'user-1',
-        telegramChatId: 12345,
-        text: '',
+        telegramChatId: 42,
+        text: 'lol',
+        timezone: 'UTC',
       }),
-    ).rejects.toThrow(InvalidInputError);
-
-    expect(taskParserGateway.parse).not.toHaveBeenCalled();
-  });
-
-  it('should re-throw ApplicationError from parser', async () => {
-    taskParserGateway.parse.mockRejectedValue(
-      new ParsingFailedError('AI failed'),
-    );
-
+    ).rejects.toBeInstanceOf(NotATaskError);
     await expect(
       usecase.execute({
         userId: 'user-1',
-        telegramChatId: 12345,
-        text: 'Buy groceries',
+        telegramChatId: 42,
+        text: '  ',
+        timezone: 'UTC',
       }),
-    ).rejects.toThrow(ParsingFailedError);
-  });
-
-  it('should wrap unexpected errors in FailedToCreateTaskError', async () => {
-    taskParserGateway.parse.mockRejectedValue(new Error('network error'));
-
-    await expect(
-      usecase.execute({
-        userId: 'user-1',
-        telegramChatId: 12345,
-        text: 'Buy groceries',
-      }),
-    ).rejects.toThrow(FailedToCreateTaskError);
+    ).rejects.toBeInstanceOf(InvalidInputError);
+    expect(create.execute).not.toHaveBeenCalled();
   });
 });

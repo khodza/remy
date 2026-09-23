@@ -6,7 +6,7 @@ import {
 import { HttpExceptionFilter } from './http-exception.filter';
 import { InvalidInputError } from '@common/errors';
 import { FailedToUpdateTaskError, TaskNotFoundError } from '@domain/task';
-import { ParsingFailedError } from '@domain/ai';
+import { InterpretationFailedError, NotATaskError } from '@domain/assistant';
 
 function run(exception: unknown) {
   const json = jest.fn();
@@ -37,8 +37,16 @@ describe('HttpExceptionFilter', () => {
     expect(run(new InvalidInputError('nope')).status).toBe(400);
     expect(run(new TaskNotFoundError('missing')).status).toBe(404);
     expect(
-      run(new ParsingFailedError('x', new Error('openai down'))).status,
+      run(new InterpretationFailedError('x', new Error('openai down'))).status,
     ).toBe(502);
+    expect(run(new NotATaskError('That time has already passed.'))).toEqual({
+      status: 422,
+      body: {
+        statusCode: 422,
+        error: 'UNPROCESSABLE_ENTITY',
+        message: 'That time has already passed.',
+      },
+    });
   });
 
   it('never leaks internal messages on 5xx', () => {

@@ -1,22 +1,17 @@
-import type { Recurrence, TaskSourceType } from '@domain/task';
+import type { Task, TaskSourceType } from '@domain/task';
 
 export type ProcessTextMessageInput = {
   userId: string;
   telegramChatId: number;
   text: string;
-  userTimezone?: string;
-  /** Where the text came from. Defaults to a chat text message. */
-  source?: {
-    type: TaskSourceType;
-    messageId?: number;
-    forwardedFrom?: string;
-  };
+  /** Zone the tasks are created in (the user's zone, OWNER_TIMEZONE fallback). */
+  timezone: string;
+  /** Where the text came from. Defaults to the Mini App. */
+  sourceType?: TaskSourceType;
+  now?: Date;
 };
 
 export type ProcessTextMessageOutput = {
-  taskId: string;
-  description: string;
-  scheduledAt: Date;
-  timezone: string;
-  recurrence: Recurrence | null;
+  /** Every task the text held, in order; at least one. */
+  tasks: Task[];
 };

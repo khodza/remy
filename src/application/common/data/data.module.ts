@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ListCategoriesUsecase } from '@usecases/category';
 import {
   ExportDataUsecase,
   ImportTasksUsecase,
@@ -16,7 +15,6 @@ import { NotificationModule } from '../notification/notification.module';
 @Module({
   imports: [TaskModule, UserModule, OpenAIModule, NotificationModule],
   providers: [
-    ListCategoriesUsecase,
     ManageCalendarFeedUsecase,
     RenderCalendarFeedUsecase,
     ExportDataUsecase,

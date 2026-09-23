@@ -15,7 +15,8 @@ import {
 } from '@domain/task';
 import { FailedToSaveUserError, UserNotFoundError } from '@domain/user';
 import { NotificationFailedError } from '@domain/notification/errors';
-import { ParsingFailedError, TranscriptionFailedError } from '@domain/ai';
+import { TranscriptionFailedError } from '@domain/ai';
+import { InterpretationFailedError, NotATaskError } from '@domain/assistant';
 import { CategoryNotFoundError } from '@usecases/category/errors';
 
 interface ErrorBody {
@@ -77,10 +78,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return httpBody(HttpStatus.NOT_FOUND, exception.message);
     }
 
-    if (exception instanceof ParsingFailedError) {
+    // The text was read fine but holds no new task (chat, garbage, a time
+    // that already passed): say so, and save nothing.
+    if (exception instanceof NotATaskError) {
+      return httpBody(HttpStatus.UNPROCESSABLE_ENTITY, exception.message);
+    }
+    if (exception instanceof InterpretationFailedError) {
       return httpBody(
         HttpStatus.BAD_GATEWAY,
-        'Could not understand that reminder. Try rephrasing the time.',
+        'Could not understand that reminder. Try again or rephrase it.',
       );
     }
     if (exception instanceof TranscriptionFailedError) {

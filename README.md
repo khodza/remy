@@ -54,8 +54,9 @@ A pre-commit hook runs eslint + prettier on staged `.ts` files.
    the server, first occurrences are aligned, past times and ungrounded
    targets become questions instead of actions. A forwarded message is kept
    and Remy asks "when?". Every change records an Undo (10 minutes).
-   The Mini App's `POST /tasks` and `/ai/parse` still use the simpler
-   `TaskParserGateway`.
+   The Mini App's `/ai/parse`, `POST /tasks` and `POST /tasks/voice` read
+   text with the same interpreter (`ParseTaskUsecase`); text that holds no
+   new task is a 422, never an invented task.
 2. **Remind.** A cron runs every minute (`ReminderScheduler` →
    `SendPendingRemindersUsecase`): roll ignored recurring tasks onto their
    latest occurrence, then atomically claim and send every pending task whose

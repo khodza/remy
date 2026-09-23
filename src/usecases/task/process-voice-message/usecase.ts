@@ -5,6 +5,10 @@ import { ProcessVoiceMessageInput, ProcessVoiceMessageOutput } from './types';
 import { ProcessTextMessageUsecase } from '../process-text-message';
 import { ApplicationError } from '@domain/error';
 import { TranscriptionFailedError } from '@domain/ai/errors';
+import { NotATaskError } from '@domain/assistant';
+
+const NOTHING_HEARD =
+  'I could not hear a reminder in that recording. Try again, a little closer to the mic.';
 
 @Injectable()
 export class ProcessVoiceMessageUsecase {
@@ -30,6 +34,9 @@ export class ProcessVoiceMessageUsecase {
         error,
       );
     }
+    // Silence transcribes to nothing; that is not a request.
+    if (transcription.text.trim() === '')
+      throw new NotATaskError(NOTHING_HEARD);
 
     // Anything after transcription (parsing, saving) reports its own error
     // type; wrapping it as a transcription failure misled the API client.
@@ -37,18 +44,10 @@ export class ProcessVoiceMessageUsecase {
       userId: input.userId,
       telegramChatId: input.telegramChatId,
       text: transcription.text,
-      userTimezone: input.userTimezone,
-      source: {
-        type: input.sourceType ?? 'voice',
-        ...(input.messageId !== undefined
-          ? { messageId: input.messageId }
-          : {}),
-      },
+      timezone: input.timezone,
+      sourceType: input.sourceType ?? 'miniapp',
     });
 
-    return {
-      ...result,
-      transcribedText: transcription.text,
-    };
+    return { ...result, transcribedText: transcription.text };
   }
 }

@@ -152,15 +152,10 @@ describe('TaskController', () => {
   });
 
   describe('create', () => {
-    it('passes user timezone and the miniapp source into ProcessTextMessageUsecase', async () => {
+    it('passes the user zone and the miniapp source into ProcessTextMessageUsecase', async () => {
       processText.execute.mockResolvedValue({
-        taskId: id,
-        description: 'Buy milk',
-        scheduledAt: ownedTask.scheduledAt!,
-        timezone: 'America/New_York',
-        recurrence: null,
+        tasks: [ownedTask, makeTask({ id: 'second', userId: 'owner-1' })],
       });
-      taskRepository.findById.mockResolvedValue(ownedTask);
 
       const dto = await controller.create(auth, {
         text: 'buy milk tomorrow 9am',
@@ -170,27 +165,31 @@ describe('TaskController', () => {
         userId: 'owner-1',
         telegramChatId: 42,
         text: 'buy milk tomorrow 9am',
-        userTimezone: 'America/New_York',
-        source: { type: 'miniapp' },
+        timezone: 'America/New_York',
+        sourceType: 'miniapp',
       });
+      // Every task was saved; the first one answers.
       expect(dto.id).toBe(id);
+      expect(() => wire.Task.parse(dto)).not.toThrow();
     });
 
-    it('falls back to UTC when neither the user nor the owner has a zone', async () => {
+    it('falls back to OWNER_TIMEZONE, then UTC, when the profile has no zone', async () => {
       userRepository.findById.mockResolvedValue({ ...owner, timezone: null });
-      processText.execute.mockResolvedValue({
-        taskId: id,
-        description: 'Buy milk',
-        scheduledAt: ownedTask.scheduledAt!,
-        timezone: 'UTC',
-        recurrence: null,
-      });
-      taskRepository.findById.mockResolvedValue(ownedTask);
+      processText.execute.mockResolvedValue({ tasks: [ownedTask] });
 
       await controller.create(auth, { text: 'buy milk' });
+      expect(processText.execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({ timezone: 'UTC' }),
+      );
 
-      expect(processText.execute).toHaveBeenCalledWith(
-        expect.objectContaining({ userTimezone: 'UTC' }),
+      process.env['OWNER_TIMEZONE'] = 'Asia/Tashkent';
+      try {
+        await controller.create(auth, { text: 'buy milk' });
+      } finally {
+        delete process.env['OWNER_TIMEZONE'];
+      }
+      expect(processText.execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({ timezone: 'Asia/Tashkent' }),
       );
     });
 

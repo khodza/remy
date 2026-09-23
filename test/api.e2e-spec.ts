@@ -50,6 +50,18 @@ describe('Remy API (e2e)', () => {
   // The assistant without OpenAI, one line at a time: "dentist" gets a
   // time tomorrow, anything else becomes a todo.
   const interpret = jest.fn(async (input: InterpreterInput) => {
+    // Garbage (a bad transcript) is chat; a past time becomes a question.
+    if (/thanks for watching|asdf/i.test(input.text)) {
+      return { intent: 'chat' as const, reply: 'You are welcome!' };
+    }
+    if (/yesterday/i.test(input.text)) {
+      return {
+        intent: 'unclear' as const,
+        question:
+          '"Call mom": that time has already passed. When should I remind you?',
+        options: [],
+      };
+    }
     const dentist = /dentist/i.test(input.text);
     return {
       intent: 'create' as const,
@@ -92,6 +104,13 @@ describe('Remy API (e2e)', () => {
       .useValue({ getBot: () => ({ api: { sendMessage, sendDocument } }) })
       .overrideProvider(Domain.Assistant.InterpreterGateway)
       .useValue({ interpret })
+      // The "recording" is its own transcript.
+      .overrideProvider(Domain.AI.TranscriptionGateway)
+      .useValue({
+        transcribe: async (input: { audioFileBuffer: Buffer }) => ({
+          text: input.audioFileBuffer.toString('utf8'),
+        }),
+      })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -655,6 +674,88 @@ describe('Remy API (e2e)', () => {
     await authed(api().post('/api/v1/export'))
       .send({ format: 'pdf' })
       .expect(400);
+  });
+
+  it('natural language: /ai/parse previews drafts; POST /tasks and voice save them; not a task is a 422', async () => {
+    const preview = wire.ParsedTask.parse(
+      (
+        await authed(api().post('/api/v1/ai/parse'))
+          .send({ text: 'buy milk' })
+          .expect(201)
+      ).body,
+    );
+    // No time → an Inbox todo, not an invented reminder (gap 5).
+    expect(preview).toMatchObject({
+      description: 'Buy milk',
+      scheduledAt: null,
+      allDay: false,
+      priority: 'normal',
+      leadMinutes: null,
+      list: null,
+    });
+    expect(preview.drafts).toHaveLength(1);
+    // Read in the owner's zone (OWNER_TIMEZONE fallback, gap 4).
+    expect(interpret.mock.calls.at(-1)![0].timezone).toBe('Asia/Tashkent');
+
+    const dentist = wire.ParsedTask.parse(
+      (
+        await authed(api().post('/api/v1/ai/parse'))
+          .send({ text: 'dentist tomorrow' })
+          .expect(201)
+      ).body,
+    );
+    expect(dentist.scheduledAt).not.toBeNull();
+    expect(dentist.priority).toBe('high');
+
+    for (const text of ['asdf qwerty', 'call mom yesterday at 5']) {
+      const refused = await authed(api().post('/api/v1/ai/parse'))
+        .send({ text })
+        .expect(422);
+      expect(ErrorBody.parse(refused.body).error).toBe('UNPROCESSABLE_ENTITY');
+    }
+    const past = await authed(api().post('/api/v1/tasks'))
+      .send({ text: 'call mom yesterday at 5' })
+      .expect(422);
+    expect(ErrorBody.parse(past.body).message).toMatch(/already passed/);
+
+    const saved = wire.Task.parse(
+      (
+        await authed(api().post('/api/v1/tasks'))
+          .send({ text: 'dentist tomorrow' })
+          .expect(201)
+      ).body,
+    );
+    expect(saved).toMatchObject({
+      description: 'Dentist',
+      kind: 'reminder',
+      source: { type: 'miniapp', originalText: 'dentist tomorrow' },
+    });
+
+    const voice = wire.Task.parse(
+      (
+        await authed(api().post('/api/v1/tasks/voice'))
+          .attach('audio', Buffer.from('buy milk'), {
+            filename: 'note.webm',
+            contentType: 'audio/webm',
+          })
+          .expect(201)
+      ).body,
+    );
+    expect(voice).toMatchObject({ description: 'Buy milk', kind: 'todo' });
+    // A garbage transcript saves nothing (B20).
+    const before = wire.TaskList.parse(
+      (await authed(api().get('/api/v1/tasks')).expect(200)).body,
+    ).tasks.length;
+    await authed(api().post('/api/v1/tasks/voice'))
+      .attach('audio', Buffer.from('Thanks for watching!'), {
+        filename: 'note.webm',
+        contentType: 'audio/webm',
+      })
+      .expect(422);
+    const after = wire.TaskList.parse(
+      (await authed(api().get('/api/v1/tasks')).expect(200)).body,
+    ).tasks.length;
+    expect(after).toBe(before);
   });
 
   it('list import: parse into reviewable drafts, then create them in one go', async () => {

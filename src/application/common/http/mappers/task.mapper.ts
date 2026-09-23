@@ -1,7 +1,12 @@
 import type { Recurrence, Task } from '@domain/task';
 import { effectiveDueAt } from '@common/fire-time';
 import { isTaskOverdue } from '@common/all-day';
-import type { RecurrenceInput, TaskWire } from '@contract/remy-contract';
+import type {
+  RecurrenceInput,
+  TaskDraftWire,
+  TaskWire,
+} from '@contract/remy-contract';
+import type { ParsedTaskDraft } from '@usecases/task/parse-task';
 
 /** Completions the wire carries: the last 30 days, newest first, at most 50. */
 export const RECENT_COMPLETIONS_DAYS = 30;
@@ -96,5 +101,20 @@ export function recurrenceFromWire(
     ...(input.lastDayOfMonth ? { lastDayOfMonth: true } : {}),
     ...(input.until !== undefined ? { until: new Date(input.until) } : {}),
     ...(input.count !== undefined ? { count: input.count } : {}),
+  };
+}
+
+/** A parsed draft (nothing saved yet) → the wire TaskDraft. */
+export function toDraftWire(draft: ParsedTaskDraft): TaskDraftWire {
+  return {
+    description: draft.description,
+    notes: draft.notes,
+    scheduledAt: draft.scheduledAt ? draft.scheduledAt.toISOString() : null,
+    allDay: draft.allDay,
+    recurrence: draft.recurrence ? recurrenceToWire(draft.recurrence) : null,
+    priority: draft.priority,
+    categoryId: draft.categoryId,
+    leadMinutes: draft.leadMinutes,
+    list: draft.list,
   };
 }

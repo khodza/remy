@@ -7,7 +7,6 @@ export const Domain = {
   },
   AI: {
     TranscriptionGateway: Symbol.for('Domain.AI.TranscriptionGateway'),
-    TaskParserGateway: Symbol.for('Domain.AI.TaskParserGateway'),
   },
   Notification: {
     Gateway: Symbol.for('Domain.Notification.Gateway'),

@@ -66,8 +66,9 @@ export class InterpreterGatewayImpl implements InterpreterGateway {
           categories: input.categories,
         },
       );
+      // Never the user's words in the log (B21): length and outcome only.
       this.logger.debug(
-        `"${input.text.slice(0, 80)}" → ${interpretation.intent}`,
+        `interpreted ${input.text.length} chars → ${interpretation.intent}`,
       );
       return interpretation;
     } catch (error) {

@@ -48,7 +48,8 @@ Path aliases: `@domain`, `@usecases`, `@infra`, `@application`, `@common` →
 Flow: message → `MessageHandler` → `AssistantResponder` →
 `HandleMessageUsecase` → `InterpreterGateway` (intent) → task use cases →
 `presentAssistantResult` (all Telegram formatting). The Mini App's NL create
-still goes `ProcessTextMessageUsecase` → `TaskParserGateway`. Cron each minute →
+(`/ai/parse`, `POST /tasks`, voice) goes `ParseTaskUsecase` → the same
+`InterpreterGateway`; no create intent → `NotATaskError` (422). Cron each minute →
 `SendPendingRemindersUsecase` → `NotificationGateway`. Buttons →
 `CallbackHandler`.
 

@@ -18,7 +18,9 @@ import {
   SnoozeTaskUsecase,
   SkipOccurrenceUsecase,
   ListListsUsecase,
+  ParseTaskUsecase,
 } from '@usecases/task';
+import { ListCategoriesUsecase } from '@usecases/category';
 import { UserModule } from '../user/user.module';
 import { ConversationModule } from '../conversation/conversation.module';
 import { OpenAIModule } from '../openai/openai.module';
@@ -52,6 +54,8 @@ import { NotificationModule } from '../notification/notification.module';
     SnoozeTaskUsecase,
     SkipOccurrenceUsecase,
     ListListsUsecase,
+    ParseTaskUsecase,
+    ListCategoriesUsecase,
   ],
   exports: [
     Domain.Task.Repository,
@@ -68,6 +72,7 @@ import { NotificationModule } from '../notification/notification.module';
     SnoozeTaskUsecase,
     SkipOccurrenceUsecase,
     ListListsUsecase,
+    ParseTaskUsecase,
   ],
 })
 export class TaskModule {}

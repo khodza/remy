@@ -9,6 +9,7 @@ import type { NotificationGateway } from '@domain/notification';
 import { TaskStatus } from '@domain/task';
 import { ListCategoriesUsecase } from '@usecases/category';
 import { CreateStructuredTaskUsecase } from '@usecases/task/create-structured-task';
+import { ParseTaskUsecase } from '@usecases/task/parse-task';
 import {
   makeTask,
   makeUser,
@@ -163,9 +164,11 @@ describe('list import', () => {
     return {
       interpreter,
       parse: new ParseListUsecase(
-        users,
-        interpreter,
-        new ListCategoriesUsecase(users),
+        new ParseTaskUsecase(
+          users,
+          interpreter,
+          new ListCategoriesUsecase(users),
+        ),
       ),
     };
   }
