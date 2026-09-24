@@ -2,7 +2,11 @@ import { Logger } from '@nestjs/common';
 import { BotError } from 'grammy';
 import type { Update, UserFromGetMe } from 'grammy/types';
 import type { HttpAdapterHost, ModuleRef } from '@nestjs/core';
-import { TelegramBotService, type WebhookHandler } from './bot.service';
+import {
+  TelegramBotService,
+  WEBHOOK_SECRET_HEADER,
+  type WebhookHandler,
+} from './bot.service';
 
 describe('TelegramBotService', () => {
   const originalEnv = { ...process.env };
@@ -137,11 +141,9 @@ describe('TelegramBotService', () => {
   });
 
   describe('webhook handler', () => {
-    const SECRET_HEADER = 'X-Telegram-Bot-Api-Secret-Token';
-
     function fakeRequest(update: Update, secret: string | undefined) {
       const headers: Record<string, string | undefined> = {
-        [SECRET_HEADER.toLowerCase()]: secret,
+        [WEBHOOK_SECRET_HEADER.toLowerCase()]: secret,
       };
       type FakeResponse = {
         statusCode: number;

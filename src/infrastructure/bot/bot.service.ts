@@ -20,6 +20,9 @@ import { getEnv } from '@common/config';
  */
 export const WEBHOOK_TIMEOUT_MS = 10_000;
 
+/** Telegram sends WEBHOOK_SECRET in this header on every update. */
+export const WEBHOOK_SECRET_HEADER = 'X-Telegram-Bot-Api-Secret-Token';
+
 /** The Express handler grammY builds for the webhook route. */
 export type WebhookHandler = ReturnType<
   typeof webhookCallback<never, 'express'>
