@@ -8,6 +8,7 @@ import { chunkLines } from '../chunk';
 import { describeRecurrence } from '@common/recurrence';
 import { formatForUserShort } from '@common/format-date';
 import type { Recurrence, Task } from '@domain/task';
+import type { User } from '@domain/user';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
 import type { ConversationRepository } from '@domain/conversation';
 import { Domain } from '@common/tokens';
@@ -49,6 +50,22 @@ function repeatLine(
 ): string {
   const label = describeRecurrence(recurrence, timezone);
   return label ? `\n   🔁 ${label}` : '';
+}
+
+/** The Mini App opened on its Settings screen. */
+function settingsUrl(appUrl: string): string {
+  const url = new URL(appUrl);
+  url.searchParams.set('screen', 'settings');
+  return url.toString();
+}
+
+/** Which zone is in use and where it comes from (profile, OWNER_TIMEZONE, UTC). */
+export function timezoneLine(user: Pick<User, 'timezone'>): string {
+  if (user.timezone) return `🕐 Timezone: ${escapeHtml(user.timezone)}`;
+  const fallback = getEnv().OWNER_TIMEZONE;
+  return fallback
+    ? `🕐 Timezone: ${escapeHtml(fallback)} <i>(the server default; not set in your profile yet)</i>`
+    : '🕐 Timezone: not set <i>(using UTC until you tell me)</i>';
 }
 
 /** The text after the command itself: "/list shopping" → "shopping". */
@@ -198,9 +215,21 @@ export class CommandHandler {
         toEnsureUserInput(ctx.from),
       );
 
+      const appUrl = getEnv().MINI_APP_URL;
       const timezoneNote = user.timezone
         ? `🕐 Your timezone: ${escapeHtml(user.timezone)} (change it with /settings)`
-        : `⚠️ <b>Set your timezone first</b> so times are right: /settings, or open the Mini App and it is detected automatically.`;
+        : `⚠️ <b>Set your timezone first</b> so times are right: ${
+            appUrl
+              ? 'tap the button below and the app detects it, or send'
+              : 'send'
+          } me your city or zone (e.g. <code>Europe/Berlin</code>).`;
+      const keyboard =
+        user.timezone === null && appUrl
+          ? new InlineKeyboard().webApp(
+              '📍 Detect from app',
+              settingsUrl(appUrl),
+            )
+          : undefined;
 
       await ctx.reply(
         `👋 <b>Welcome to Remy, your reminder assistant.</b>\n\n` +
@@ -218,7 +247,10 @@ export class CommandHandler {
           `/settings – timezone, brief times, quiet hours\n` +
           `/help – show help\n\n` +
           timezoneNote,
-        { parse_mode: 'HTML' },
+        {
+          parse_mode: 'HTML',
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        },
       );
     } catch (error) {
       console.error('Failed to handle start command:', error);
@@ -349,7 +381,6 @@ export class CommandHandler {
         toEnsureUserInput(ctx.from),
       );
 
-      const currentTimezone = user.timezone ?? 'Not set (using UTC)';
       const s = user.settings;
       const weekEnd = s.weekStartsOn === 1 ? 'Sunday' : 'Saturday';
       const rhythm = [
@@ -372,33 +403,24 @@ export class CommandHandler {
         }`,
       ].join('\n');
 
-      // Create inline keyboard with common timezones
-      const keyboard = new InlineKeyboard()
-        .text('🌍 UTC', 'tz:UTC')
-        .text('🇺🇸 America/New_York', 'tz:America/New_York')
-        .row()
-        .text('🇺🇸 America/Los_Angeles', 'tz:America/Los_Angeles')
-        .text('🇬🇧 Europe/London', 'tz:Europe/London')
-        .row()
-        .text('🇩🇪 Europe/Berlin', 'tz:Europe/Berlin')
-        .text('🇯🇵 Asia/Tokyo', 'tz:Asia/Tokyo')
-        .row()
-        .text('🇺🇿 Asia/Tashkent', 'tz:Asia/Tashkent')
-        .text('🇦🇺 Australia/Sydney', 'tz:Australia/Sydney');
-
       const appUrl = getEnv().MINI_APP_URL;
-      if (appUrl) {
-        const url = new URL(appUrl);
-        url.searchParams.set('screen', 'settings');
-        keyboard.row().webApp('⚙️ Change these in the app', url.toString());
-      }
+      const keyboard = appUrl
+        ? new InlineKeyboard()
+            .webApp('🌍 Region and timezone', settingsUrl(appUrl))
+            .row()
+            .webApp('⚙️ Change these in the app', settingsUrl(appUrl))
+        : undefined;
 
       await ctx.reply(
-        `⚙️ <b>Settings</b>\n\n🕐 Timezone: ${escapeHtml(currentTimezone)}\n${rhythm}\n\n` +
+        `⚙️ <b>Settings</b>\n\n${timezoneLine(user)}\n${rhythm}\n\n` +
+          `To change the timezone, ${appUrl ? 'open Region in the app or ' : ''}send me your city or zone (e.g. <code>Europe/Berlin</code>, “I'm in Tashkent now”).` +
           (appUrl
-            ? 'Change them in the app, or pick a timezone below.'
-            : 'Pick a timezone below. Brief times, quiet hours and nudges are changed in the Mini App (Settings).'),
-        { reply_markup: keyboard, parse_mode: 'HTML' },
+            ? ''
+            : ' Brief times, quiet hours and nudges are changed in the Mini App (Settings).'),
+        {
+          parse_mode: 'HTML',
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        },
       );
     } catch (error) {
       console.error('Failed to handle settings command:', error);

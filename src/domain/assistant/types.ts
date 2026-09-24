@@ -56,6 +56,8 @@ export type Interpretation =
       title: string | null;
       notes: string | null;
     }
+  /** "I'm in Berlin now", "set my timezone to Asia/Tashkent". */
+  | { intent: 'set_timezone'; timezone: string }
   | { intent: 'chat'; reply: string }
   | { intent: 'unclear'; question: string; options: string[] };
 

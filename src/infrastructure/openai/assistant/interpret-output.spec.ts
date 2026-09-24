@@ -46,6 +46,7 @@ const reply = (over: Partial<AssistantModelOutput>): AssistantModelOutput => ({
   reply: null,
   question: null,
   options: [],
+  timezone: null,
   ...over,
 });
 const draft = (over: Partial<AssistantModelOutput['tasks'][number]>) => ({
@@ -755,6 +756,45 @@ describe('interpretAssistantOutput', () => {
         interpretAssistantOutput(
           reply({ intent: 'complete', list: 'shopping' }),
           { ...ctx, text: 'all done' },
+        ),
+      ).toMatchObject({ intent: 'unclear' });
+    });
+  });
+
+  describe('set_timezone', () => {
+    const tz = (timezone: string | null, text: string) =>
+      interpretAssistantOutput(reply({ intent: 'set_timezone', timezone }), {
+        ...ctx,
+        text,
+      });
+
+    it('accepts a known zone the message points at, spelled canonically', () => {
+      expect(tz('europe/berlin', "I'm in Berlin now")).toEqual({
+        intent: 'set_timezone',
+        timezone: 'Europe/Berlin',
+      });
+      expect(tz('Asia/Tashkent', 'set my timezone to tashkent please')).toEqual(
+        { intent: 'set_timezone', timezone: 'Asia/Tashkent' },
+      );
+      // A bare place name (the answer to "send me your city"), even translated.
+      expect(tz('Asia/Tashkent', 'Ташкент')).toMatchObject({
+        timezone: 'Asia/Tashkent',
+      });
+      expect(tz('UTC', 'use utc')).toMatchObject({ timezone: 'UTC' });
+    });
+
+    it('asks instead of guessing: unknown zone, or a zone the message never mentions', () => {
+      expect(tz('Europe/Atlantis', "I'm in Atlantis")).toMatchObject({
+        intent: 'unclear',
+        question: expect.stringContaining('Which timezone'),
+      });
+      expect(tz(null, 'change my timezone')).toMatchObject({
+        intent: 'unclear',
+      });
+      expect(
+        tz(
+          'Europe/Berlin',
+          'remind me to call the dentist about the appointment tomorrow',
         ),
       ).toMatchObject({ intent: 'unclear' });
     });

@@ -144,6 +144,33 @@ describe('Phase 3 persistence (real MongoDB)', () => {
     expect(await conversations.takeUndo('not-an-id', 42, now)).toBeNull();
   });
 
+  it('keeps the timezone to restore, telling "unset" from "not a timezone change"', async () => {
+    const save = (restoreTimezone?: string | null) =>
+      conversations.saveUndo({
+        chatId: 42,
+        userId: 'u',
+        label: 'tz',
+        snapshots: [],
+        createdTaskIds: [],
+        ...(restoreTimezone !== undefined ? { restoreTimezone } : {}),
+        expiresAt: new Date('2026-09-18T10:10:00Z'),
+      });
+    const [plain, wasUnset, wasSet] = await Promise.all([
+      save(),
+      save(null),
+      save('Asia/Tashkent'),
+    ]);
+    expect(await conversations.takeUndo(plain, 42, now)).not.toHaveProperty(
+      'restoreTimezone',
+    );
+    expect(
+      (await conversations.takeUndo(wasUnset, 42, now))?.restoreTimezone,
+    ).toBeNull();
+    expect(
+      (await conversations.takeUndo(wasSet, 42, now))?.restoreTimezone,
+    ).toBe('Asia/Tashkent');
+  });
+
   describe('tasks', () => {
     const base = {
       userId: 'user-1',

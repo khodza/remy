@@ -69,6 +69,11 @@ export type UndoRecord = {
   snapshots: TaskSnapshot[];
   /** Tasks the action created; undo deletes them. */
   createdTaskIds: string[];
+  /**
+   * The user's timezone before a timezone change (null = it was unset).
+   * Absent for every other action.
+   */
+  restoreTimezone?: string | null;
   expiresAt: Date;
 };
 

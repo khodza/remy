@@ -7,6 +7,7 @@ import {
 } from '@common/recurrence';
 import { allDayFireTime } from '@common/all-day';
 import { dayBoundsInZone } from '@common/day-bounds';
+import { canonicalTimeZone, cityOfTimeZone } from '@common/timezones';
 import type {
   CandidateTask,
   Interpretation,
@@ -43,6 +44,7 @@ const ModelOutput = z.object({
     'reschedule',
     'delete',
     'edit',
+    'set_timezone',
     'chat',
     'unclear',
   ]),
@@ -74,6 +76,7 @@ const ModelOutput = z.object({
   reply: z.string().nullable(),
   question: z.string().nullable(),
   options: z.array(z.string()),
+  timezone: z.string().nullable(),
 });
 export type AssistantModelOutput = z.infer<typeof ModelOutput>;
 
@@ -312,6 +315,16 @@ export function interpretAssistantOutput(
         return ask('What should I change it to?');
       return { intent: 'edit', targetId, title, notes };
     }
+    case 'set_timezone': {
+      // Only a zone the runtime knows, and only when the user plausibly
+      // meant it: a zone or city word in the message, a timezone keyword,
+      // or a message that is little more than the place name ("Tashkent").
+      const zone = canonicalTimeZone(out.timezone);
+      if (zone === null || !mentionsZone(ctx.text, zone)) {
+        return ask(TIMEZONE_QUESTION);
+      }
+      return { intent: 'set_timezone', timezone: zone };
+    }
     case 'chat':
       return { intent: 'chat', reply: out.reply?.trim() || '🙂' };
     case 'unclear':
@@ -403,6 +416,32 @@ function isGrounded(ctx: InterpretContext, targetIds: string[]): boolean {
       ),
     );
   });
+}
+
+const TIMEZONE_QUESTION =
+  'Which timezone? Send me your city or the zone name, e.g. Europe/Berlin or Asia/Tashkent.';
+const TIMEZONE_KEYWORDS =
+  /time\s*zone|timezone|\butc\b|\bgmt\b|часов\p{L}*\s+пояс|пояс|vaqt\s*(mintaqa|zona)/iu;
+
+function mentionsZone(text: string, zone: string): boolean {
+  if (TIMEZONE_KEYWORDS.test(text)) return true;
+  const said = words(text);
+  const named = [
+    ...words(cityOfTimeZone(zone)),
+    ...(zone === 'UTC' ? ['utc'] : []),
+  ];
+  if (
+    named.some((w) =>
+      said.some(
+        (u) => u.startsWith(w.slice(0, 4)) || w.startsWith(u.slice(0, 4)),
+      ),
+    )
+  ) {
+    return true;
+  }
+  // "Ташкент" / "Toshkent" for Asia/Tashkent: the model translated the
+  // city. A message this short is an answer to "send me your city".
+  return (text.match(/\p{L}+/gu) ?? []).length <= 4;
 }
 
 /** A word of the list name (as given or normalised) appears in the message. */

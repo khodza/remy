@@ -133,7 +133,8 @@ export type CreateUserParams = {
 
 export type UpdateUserParams = {
   id: string;
-  timezone?: string;
+  /** null = unset (back to OWNER_TIMEZONE / UTC). */
+  timezone?: string | null;
   /** null = back to the defaults. */
   settings?: UserSettings | null;
   /** null = never set up (the defaults are created on next use). */

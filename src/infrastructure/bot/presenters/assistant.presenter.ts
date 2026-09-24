@@ -36,6 +36,16 @@ export function presentAssistantResult(
     case 'chat':
       return { html: escapeHtml(result.reply) };
 
+    case 'timezone_changed': {
+      const was = result.previous
+        ? ` <i>(was ${escapeHtml(result.previous)})</i>`
+        : '';
+      return {
+        html: `🕐 <b>Timezone set to ${escapeHtml(result.timezone)}</b>${was}\nIt is ${formatInTimeZone(now, result.timezone, 'HH:mm')} there now; every time I show you is in this zone from here on.`,
+        keyboard: undoKeyboard(result.undoId),
+      };
+    }
+
     case 'question': {
       const keyboard = new InlineKeyboard();
       // Short answers ("05:00", "17:00") sit side by side; long ones get a

@@ -11,6 +11,7 @@ import {
   type TaskRepository,
   TaskStatus,
 } from '@domain/task/repository';
+import type { UserRepository } from '@domain/user';
 import { Domain } from '@common/tokens';
 import { dayBoundsInZone } from '@common/day-bounds';
 import { effectiveDueAt } from '@common/fire-time';
@@ -20,6 +21,7 @@ import { MarkCompleteUsecase } from '../../task/mark-complete';
 import { DeleteTaskUsecase } from '../../task/delete-task';
 import { SnoozeTaskUsecase } from '../../task/snooze-task';
 import { UpdateTaskUsecase } from '../../task/update-task';
+import { UpdateTimezoneUsecase } from '../../user/update-timezone';
 import { UndoRecorder } from '../undo-recorder';
 import type { AssistantResult, HandleMessageInput } from './types';
 
@@ -62,6 +64,9 @@ export class HandleMessageUsecase {
     private readonly snoozeTask: SnoozeTaskUsecase,
     private readonly updateTask: UpdateTaskUsecase,
     private readonly undo: UndoRecorder,
+    @Inject(Domain.User.Repository)
+    private readonly users: UserRepository,
+    private readonly updateTimezone: UpdateTimezoneUsecase,
   ) {}
 
   /** A forwarded message arrived on its own: keep it until the user says when. */
@@ -245,6 +250,28 @@ export class HandleMessageUsecase {
           question: interpretation.question,
           options: interpretation.options,
         };
+
+      case 'set_timezone': {
+        const user = await this.users.findById(input.userId);
+        const previous = user?.timezone ?? null;
+        // Recorded before acting, like every other change.
+        const undoId = await this.undo.record({
+          chatId: input.chatId,
+          userId: input.userId,
+          label: `set the timezone to ${interpretation.timezone}`,
+          restoreTimezone: previous,
+        });
+        await this.updateTimezone.execute({
+          userId: input.userId,
+          timezone: interpretation.timezone,
+        });
+        return {
+          kind: 'timezone_changed',
+          timezone: interpretation.timezone,
+          previous,
+          undoId,
+        };
+      }
 
       case 'create': {
         const created: Task[] = [];

@@ -46,6 +46,7 @@ type UndoDoc = {
   label: string;
   snapshots: TaskSnapshot[];
   created_task_ids: string[];
+  restore_timezone?: string | null;
   expires_at: Date;
   used_at: Date | null;
 };
@@ -118,6 +119,9 @@ export class ConversationRepositoryImpl implements ConversationRepository {
       label: record.label,
       snapshots: record.snapshots,
       created_task_ids: record.createdTaskIds,
+      ...(record.restoreTimezone !== undefined
+        ? { restore_timezone: record.restoreTimezone }
+        : {}),
       expires_at: record.expiresAt,
       used_at: null,
     });
@@ -149,6 +153,9 @@ export class ConversationRepositoryImpl implements ConversationRepository {
         recurrence: s.recurrence ?? null,
       })),
       createdTaskIds: doc.created_task_ids,
+      ...(doc.restore_timezone !== undefined
+        ? { restoreTimezone: doc.restore_timezone }
+        : {}),
       expiresAt: doc.expires_at,
     };
   }

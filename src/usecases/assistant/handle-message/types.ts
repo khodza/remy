@@ -35,6 +35,13 @@ export type AssistantResult =
     }
   | { kind: 'deleted'; tasks: Task[]; undoId: string }
   | { kind: 'edited'; task: Task; undoId: string }
+  | {
+      kind: 'timezone_changed';
+      timezone: string;
+      /** The profile zone before (null = it was not set). */
+      previous: string | null;
+      undoId: string;
+    }
   | { kind: 'chat'; reply: string }
   | { kind: 'question'; question: string; options: string[] };
 

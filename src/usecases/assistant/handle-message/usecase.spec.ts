@@ -19,6 +19,7 @@ import type { MarkCompleteUsecase } from '../../task/mark-complete';
 import type { DeleteTaskUsecase } from '../../task/delete-task';
 import type { SnoozeTaskUsecase } from '../../task/snooze-task';
 import type { UpdateTaskUsecase } from '../../task/update-task';
+import type { UpdateTimezoneUsecase } from '../../user/update-timezone';
 
 describe('HandleMessageUsecase', () => {
   const now = new Date('2026-09-18T09:47:00Z'); // 14:47 Tashkent
@@ -48,6 +49,7 @@ describe('HandleMessageUsecase', () => {
   let deleteTask: { execute: jest.Mock };
   let snoozeTask: { execute: jest.Mock };
   let updateTask: { execute: jest.Mock };
+  let updateTimezone: { execute: jest.Mock };
   let usecase: HandleMessageUsecase;
 
   const input = (
@@ -97,6 +99,7 @@ describe('HandleMessageUsecase', () => {
         makeTask({ id: taskId, ...rest }),
       ),
     };
+    updateTimezone = { execute: jest.fn().mockResolvedValue(makeUser()) };
     const users = mockUserRepository(
       makeUser({
         categories: [
@@ -120,6 +123,8 @@ describe('HandleMessageUsecase', () => {
       snoozeTask as unknown as SnoozeTaskUsecase,
       updateTask as unknown as UpdateTaskUsecase,
       new UndoRecorder(conversations),
+      users,
+      updateTimezone as unknown as UpdateTimezoneUsecase,
     );
   });
   afterEach(() => jest.useRealTimers());
@@ -554,6 +559,28 @@ describe('HandleMessageUsecase', () => {
         'completed 2 tasks',
       );
     });
+  });
+
+  it('set_timezone: records the old zone for Undo before changing it', async () => {
+    interpretAs({ intent: 'set_timezone', timezone: 'Europe/Berlin' });
+    const result = await usecase.execute(input({ text: "I'm in Berlin now" }));
+    expect(result).toMatchObject({
+      kind: 'timezone_changed',
+      timezone: 'Europe/Berlin',
+      previous: 'UTC',
+    });
+    if (result.kind !== 'timezone_changed') throw new Error('expected');
+    expect(conversations.undos.get(result.undoId)).toMatchObject({
+      restoreTimezone: 'UTC',
+      label: 'set the timezone to Europe/Berlin',
+    });
+    expect(updateTimezone.execute).toHaveBeenCalledWith({
+      userId: 'user-1',
+      timezone: 'Europe/Berlin',
+    });
+    expect(conversations.saveUndo.mock.invocationCallOrder[0]).toBeLessThan(
+      updateTimezone.execute.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('unclear: remembers the question; the next non-question clears it', async () => {

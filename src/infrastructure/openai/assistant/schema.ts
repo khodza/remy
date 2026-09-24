@@ -70,6 +70,7 @@ export const ASSISTANT_OUTPUT_SCHEMA = {
       'reply',
       'question',
       'options',
+      'timezone',
     ],
     properties: {
       intent: {
@@ -81,6 +82,7 @@ export const ASSISTANT_OUTPUT_SCHEMA = {
           'reschedule',
           'delete',
           'edit',
+          'set_timezone',
           'chat',
           'unclear',
         ],
@@ -136,6 +138,7 @@ export const ASSISTANT_OUTPUT_SCHEMA = {
       reply: nullable('string'),
       question: nullable('string'),
       options: { type: 'array', items: { type: 'string' } },
+      timezone: nullable('string'),
     },
   },
 } as const;

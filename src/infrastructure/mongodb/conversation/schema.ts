@@ -63,6 +63,8 @@ export const UndoRecordSchema = new Schema(
     label: { type: String, required: true },
     snapshots: { type: [Schema.Types.Mixed], default: [] },
     created_task_ids: { type: [String], default: [] },
+    // String or null; absent unless the action changed the timezone.
+    restore_timezone: { type: Schema.Types.Mixed, default: undefined },
     expires_at: { type: Date, required: true },
     used_at: { type: Date, default: null },
     created_at: {

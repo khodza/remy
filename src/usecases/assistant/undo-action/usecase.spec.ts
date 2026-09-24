@@ -3,8 +3,10 @@ import { UndoRecorder } from '../undo-recorder';
 import { TaskStatus } from '@domain/task';
 import {
   makeTask,
+  makeUser,
   mockConversationRepository,
   mockTaskRepository,
+  mockUserRepository,
 } from '@test/factories';
 
 describe('UndoActionUsecase', () => {
@@ -12,6 +14,7 @@ describe('UndoActionUsecase', () => {
   let tasks: ReturnType<typeof mockTaskRepository>;
   let conversations: ReturnType<typeof mockConversationRepository>;
   let recorder: UndoRecorder;
+  let users: ReturnType<typeof mockUserRepository>;
   let usecase: UndoActionUsecase;
 
   beforeEach(() => {
@@ -20,7 +23,8 @@ describe('UndoActionUsecase', () => {
     tasks.update.mockImplementation(async () => makeTask());
     conversations = mockConversationRepository();
     recorder = new UndoRecorder(conversations);
-    usecase = new UndoActionUsecase(conversations, tasks);
+    users = mockUserRepository(makeUser({ timezone: 'Europe/Berlin' }));
+    usecase = new UndoActionUsecase(conversations, tasks, users);
   });
   afterEach(() => jest.useRealTimers());
 
@@ -33,7 +37,11 @@ describe('UndoActionUsecase', () => {
     });
     await expect(
       usecase.execute({ undoId, chatId: 42, userId: 'user-1' }),
-    ).resolves.toEqual({ undone: true, label: 'created 2 tasks' });
+    ).resolves.toEqual({
+      undone: true,
+      label: 'created 2 tasks',
+      taskIds: ['a', 'b'],
+    });
     expect(tasks.update).toHaveBeenCalledWith({
       id: 'a',
       status: TaskStatus.Deleted,
@@ -79,6 +87,38 @@ describe('UndoActionUsecase', () => {
       nudgeCount: before.nudgeCount,
       snoozeCount: before.snoozeCount,
     });
+  });
+
+  it('puts the previous timezone back, including "not set"', async () => {
+    const undoId = await recorder.record({
+      chatId: 42,
+      userId: 'user-1',
+      label: 'set the timezone to Europe/Berlin',
+      restoreTimezone: 'Asia/Tashkent',
+    });
+    await usecase.execute({ undoId, chatId: 42, userId: 'user-1' });
+    expect(users.current().timezone).toBe('Asia/Tashkent');
+    expect(tasks.update).not.toHaveBeenCalled();
+
+    const unset = await recorder.record({
+      chatId: 42,
+      userId: 'user-1',
+      label: 'set the timezone to Europe/Berlin',
+      restoreTimezone: null,
+    });
+    await usecase.execute({ undoId: unset, chatId: 42, userId: 'user-1' });
+    expect(users.current().timezone).toBeNull();
+  });
+
+  it('an ordinary undo leaves the timezone alone', async () => {
+    const undoId = await recorder.record({
+      chatId: 42,
+      userId: 'user-1',
+      label: 'deleted "x"',
+      before: [makeTask()],
+    });
+    await usecase.execute({ undoId, chatId: 42, userId: 'user-1' });
+    expect(users.update).not.toHaveBeenCalled();
   });
 
   it('works once, only in its chat, only for its owner, only within the window', async () => {

@@ -40,6 +40,8 @@ export class UndoRecorder {
     label: string;
     before?: Task[];
     createdTaskIds?: string[];
+    /** The timezone to put back (null = unset); only for a timezone change. */
+    restoreTimezone?: string | null;
   }): Promise<string> {
     return this.conversations.saveUndo({
       chatId: input.chatId,
@@ -47,6 +49,9 @@ export class UndoRecorder {
       label: input.label,
       snapshots: (input.before ?? []).map(snapshotOf),
       createdTaskIds: input.createdTaskIds ?? [],
+      ...(input.restoreTimezone !== undefined
+        ? { restoreTimezone: input.restoreTimezone }
+        : {}),
       expiresAt: addMinutes(new Date(), UNDO_WINDOW_MINUTES),
     });
   }

@@ -4,7 +4,6 @@ import { MarkCompleteUsecase } from '@usecases/task/mark-complete';
 import { DelayTaskUsecase } from '@usecases/task/delay-task';
 import { SnoozeTaskUsecase } from '@usecases/task/snooze-task';
 import { DeleteTaskUsecase } from '@usecases/task/delete-task';
-import { UpdateTimezoneUsecase } from '@usecases/user/update-timezone';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { UndoActionUsecase, UndoRecorder } from '@usecases/assistant';
 import type { ConversationRepository } from '@domain/conversation';
@@ -49,7 +48,6 @@ export class CallbackHandler {
     private readonly delayTaskUsecase: DelayTaskUsecase,
     private readonly snoozeTaskUsecase: SnoozeTaskUsecase,
     private readonly deleteTaskUsecase: DeleteTaskUsecase,
-    private readonly updateTimezoneUsecase: UpdateTimezoneUsecase,
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly undoAction: UndoActionUsecase,
     private readonly undoRecorder: UndoRecorder,
@@ -90,7 +88,6 @@ export class CallbackHandler {
     if (data.startsWith('ans:')) return this.handleAnswer(ctx, data);
     if (data === 'noop') return '';
     if (data.startsWith('fwd:')) return this.handleForwardWhen(ctx, data);
-    if (data.startsWith('tz:')) return this.handleTimezone(ctx, data);
     if (data.startsWith('rv:')) return this.handleReview(ctx, data);
     if (data === 'brief:overdue') return this.handleBriefOverdue(ctx);
     if (data.startsWith(LIST_CALLBACK_PREFIX)) {
@@ -276,22 +273,6 @@ export class CallbackHandler {
     );
     await this.responder.respond(ctx, user, text, { source: { type: 'text' } });
     return '📌 Saving…';
-  }
-
-  private async handleTimezone(ctx: Context, data: string): Promise<Toast> {
-    if (ctx.from === undefined) return '❌ Action failed';
-
-    const timezone = data.replace('tz:', '');
-    const user = await this.ensureUserUsecase.execute(
-      toEnsureUserInput(ctx.from),
-    );
-    await this.updateTimezoneUsecase.execute({ userId: user.id, timezone });
-
-    await this.edit(
-      ctx,
-      `✅ <b>Timezone updated!</b>\n\n🕐 New timezone: ${escapeHtml(timezone)}`,
-    );
-    return '✅ Timezone updated!';
   }
 
   /** A row button (or "all") on the evening review: act, then redraw the message. */

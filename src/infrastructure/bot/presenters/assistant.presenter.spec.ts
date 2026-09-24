@@ -288,6 +288,23 @@ describe('presentAssistantResult', () => {
     expect(empty.html).toContain('🗂 Shopping list · Today');
   });
 
+  it('timezone_changed: names the zone, the old one, the local time there, with Undo', () => {
+    const reply = presentAssistantResult(
+      {
+        kind: 'timezone_changed',
+        timezone: 'Europe/Berlin',
+        previous: 'Asia/Tashkent',
+        undoId: 'u9',
+      },
+      tz,
+      now, // 09:47Z = 11:47 Berlin
+    );
+    expect(reply.html).toContain('Timezone set to Europe/Berlin');
+    expect(reply.html).toContain('(was Asia/Tashkent)');
+    expect(reply.html).toContain('It is 11:47 there now');
+    expect(buttons(reply)).toEqual([['↩ Undo', 'undo:u9']]);
+  });
+
   it('question: options become tappable answers; chat text is escaped', () => {
     const q = presentAssistantResult(
       {
