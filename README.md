@@ -27,16 +27,19 @@ prints the full list of problems (`src/common/config/env.ts` is the schema).
 | Command | What |
 |---|---|
 | `npm run dev` | Mongo via docker compose, then the API in watch mode |
+| `npm run dev:all` | Mongo + API + the Mini App dev server (`../remy-webapp`) in one terminal; `-- --tunnel` for a phone, `-- --no-web` for the backend only |
 | `npm run dev:api` | API in watch mode only |
-| `npm run check` | typecheck + lint + unit tests (what CI should run) |
+| `npm run check` | typecheck + lint + unit tests + contract check (what CI runs, plus the DB suites) |
 | `npm test` / `npm run test:watch` | unit tests (jest, ts-jest) |
+| `npm run test:int` / `npm run test:e2e` | repositories / the whole app against an in-memory MongoDB |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | eslint with autofix |
+| `npm run lint` | eslint with autofix (`lint:check` without) |
 | `npm run build` | compile to `build/` (SWC) |
 | `npm run assistant:try -- "buy milk, call mom at 5"` | run phrases through the real intent router (OpenAI) and print what Remy would do; no DB, no Telegram |
 | `npm run seed` | insert a realistic sample day for the owner (`-- --reset`, `-- --dry-run`) |
 | `npm run contract:sync` / `contract:check` | regenerate / verify the frontend's copy of the HTTP contract |
-| `npm run start:prod:api` | run the compiled build |
+| `npm run start:prod:api` | run the compiled build (`node build/main`) |
+| `npm run docker:up` / `docker:logs` / `docker:down` | build and run the backend container next to Mongo (compose profile `app`) |
 
 A pre-commit hook runs eslint + prettier on staged `.ts` files.
 
@@ -62,7 +65,7 @@ A pre-commit hook runs eslint + prettier on staged `.ts` files.
    `nextFireAt` has come (a crash between claim and send can never duplicate
    a reminder; transient Telegram errors are retried after 2 minutes).
    Buttons: ✅ Done, +15m → HH:mm, +1h → HH:mm, Tonight, Tomorrow. Times are
-   shown in the task's timezone. A "remind me before" heads-up fires first;
+   shown in the user's current timezone. A "remind me before" heads-up fires first;
    an ignored reminder is nudged again at each escalation step (30 min and
    2 h by default, never for low priority); during quiet hours pings are held
    until the window ends (high priority can ring through).
@@ -86,7 +89,8 @@ src/
 ```
 
 Path aliases: `@domain/*`, `@usecases/*`, `@infra/*`, `@application/*`,
-`@common/*`.
+`@common/*`. The flows, the data model and the deploy modes are described in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Daily rhythm
 
@@ -140,6 +144,55 @@ OWNER_TELEGRAM_ID=123456789   # the frontend's VITE_MOCK_TG_USER_ID, or unset
 
 Only honoured when `NODE_ENV` is not `production`; the boot log warns while it
 is on.
+
+## Running it for real
+
+### Docker
+
+```bash
+cp .env.example .env         # fill it in; set CORS_ORIGINS when NODE_ENV=production
+npm run docker:up            # builds the image and starts it next to Mongo
+npm run docker:logs
+```
+
+The [`Dockerfile`](Dockerfile) is multi-stage (node:22-alpine, `nest build`,
+non-root runtime running `node build/main`, the same entry as
+`npm run start:prod:api`). Without compose:
+
+```bash
+docker build -t remy .
+docker run --env-file .env -e MONGODB_URI=mongodb://host:27017/remy -p 3000:3000 remy
+```
+
+`GET /api/v1/health` needs no auth and answers `200 {status:"ok", checks:{mongo,
+telegram}}`, or `503` with the same body when MongoDB or Telegram is
+unreachable; the image's `HEALTHCHECK` uses it. Logs are JSON lines in
+production (pino), with a request id per HTTP request.
+
+### Polling or webhook
+
+By default the process long-polls Telegram (`BOT_MODE=polling`), which needs
+no public URL. Behind a reverse proxy with TLS you can switch to a webhook:
+
+```
+BOT_MODE=webhook
+WEBHOOK_URL=https://remy.example.com/telegram/webhook   # https, with a path
+WEBHOOK_SECRET=<1-256 chars of A-Z a-z 0-9 _ ->
+```
+
+The process serves `POST` on the URL's path itself (forward it to the
+container's port, no `/api/v1` prefix), registers the URL with Telegram on
+boot, and rejects any request whose `X-Telegram-Bot-Api-Secret-Token` is not
+`WEBHOOK_SECRET`. Switching back to polling is just `BOT_MODE=polling`: the
+stale webhook is removed on the next start.
+
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs typecheck, lint,
+unit, integration and e2e tests on every push and pull request, and checks
+the frontend's contract copy against `<owner>/remy-webapp` (set the
+repository variable `REMY_WEBAPP_REPO` if it lives elsewhere and the secret
+`REMY_WEBAPP_TOKEN` if it is private).
 
 ## Environment variables
 

@@ -14,6 +14,7 @@ NestJS 11 + grammY (bot) + MongoDB (mongoose) + OpenAI, plus an HTTP API under
 ```bash
 npm run dev            # docker compose mongo + API watch mode (:3000)
 npm run dev:api        # API watch mode only
+npm run dev:all        # Mongo + API + ../remy-webapp dev server in one terminal (--tunnel, --no-web)
 npm run check          # typecheck + lint + tests — run before finishing any task
 npm test               # jest unit tests (mocks only, no DB/network)
 npm run test:int       # repository vs real in-memory MongoDB (claim query, views, backfill)
@@ -21,6 +22,7 @@ npm run test:e2e       # real AppModule over HTTP vs in-memory MongoDB, contract
 npm run typecheck      # tsc --noEmit
 npm run lint           # eslint --fix
 npm run build          # SWC build into build/ ; start with npm run start:prod:api
+npm run docker:up      # build + run the backend container next to Mongo (compose profile app)
 npm run seed           # sample day for the owner (--reset, --dry-run); needs OWNER_TELEGRAM_ID
 npm run contract:sync  # regenerate the frontend's copy of the HTTP contract
 ```
@@ -44,6 +46,9 @@ Path aliases: `@domain`, `@usecases`, `@infra`, `@application`, `@common` →
   mappers, guards, exception filter.
 - `common/config/env.ts` — **the only place that reads `process.env`**. Use
   `getEnv()`; add new variables to the zod schema and to `.env.example`.
+- `docs/ARCHITECTURE.md` — flows, data model, contract loop, deploy modes
+  (`BOT_MODE=polling|webhook`, Docker, `/health`, CI). Keep it current when
+  one of those changes.
 
 Flow: message → `MessageHandler` → `AssistantResponder` →
 `HandleMessageUsecase` → `InterpreterGateway` (intent) → task use cases →
@@ -161,6 +166,23 @@ The domain layer must not import the contract; the HTTP layer maps.
 - Don't edit `../remy-webapp` from a backend task unless explicitly asked; the
   HTTP contract is documented in that repo's `src/shared/api/CLAUDE.md`. When
   you change a DTO, say so in the final message.
+
+## Logging
+
+- Log through Nest's `Logger` (`private readonly logger = new
+  Logger(MyClass.name)`), never `console.*`: `app.useLogger` routes it to
+  pino (`nestjs-pino`, options in `application/common/logging/logger.options.ts`).
+  JSON in production, pretty in development, silent in tests; `LOG_LEVEL`
+  overrides.
+- Every HTTP request has a request id (`x-request-id`, kept from the caller
+  when short and safe, echoed in the response); lines logged while handling
+  it carry `reqId`. Successful `/health` probes are not logged; 4xx log as
+  warn, 5xx as error.
+- Never log credentials: `Authorization`, initData, the webhook secret header
+  and the calendar feed token are redacted by configuration, but a message
+  string you build yourself is not, so keep user tokens and full initData out
+  of it. Log a reason, not the raw payload.
+- Log when something happened (sent, failed, held), not on every tick.
 
 ## Single-owner mode and dev bypass
 
