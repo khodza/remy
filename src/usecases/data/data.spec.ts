@@ -139,6 +139,90 @@ describe('export', () => {
       JSON.parse(notifications.sendDocument.mock.calls[1]![0].content).tasks,
     ).toHaveLength(2);
   });
+
+  it('writes local times in the profile zone, not the zone a task was made in (8.7)', async () => {
+    const users = mockUserRepository(
+      makeUser({ telegramUserId: 777, timezone: 'Asia/Tashkent' }),
+    );
+    const tasks = mockTaskRepository();
+    tasks.findByUserId.mockResolvedValue([
+      makeTask({
+        id: 't1',
+        description: 'Standup',
+        scheduledAt: NOW, // 10:00Z = 15:00 in Tashkent, 06:00 in New York
+        timezone: 'America/New_York',
+        recurrence: {
+          type: 'daily',
+          anchorAt: NOW,
+          until: new Date('2026-09-30T04:00:00Z'), // 30 Sep NY, 30 Sep Tashkent
+        },
+      }),
+      makeTask({
+        id: 't2',
+        description: 'Birthday',
+        scheduledAt: new Date('2026-09-21T04:00:00Z'), // 09:00 NY, 21 Sep
+        timezone: 'America/New_York',
+        allDay: true,
+      }),
+    ]);
+    const notifications = mockNotifications();
+    const exporter = new ExportDataUsecase(users, tasks, notifications);
+
+    await exporter.execute({ userId: 'user-1', format: 'csv', now: NOW });
+    const rows =
+      notifications.sendDocument.mock.calls[0]![0].content.split('\r\n');
+    expect(rows[1]).toContain('Standup,pending,2026-09-19 15:00,Asia/Tashkent');
+    expect(rows[1]).toContain('Every day until 30 Sep 2026');
+    // An all-day task is a date, on its own day.
+    expect(rows[2]).toContain('Birthday,pending,2026-09-21,Asia/Tashkent');
+
+    await exporter.execute({ userId: 'user-1', format: 'json', now: NOW });
+    const json = JSON.parse(
+      notifications.sendDocument.mock.calls[1]![0].content,
+    );
+    expect(json.timezone).toBe('Asia/Tashkent');
+    expect(json.tasks[0]).toMatchObject({
+      dueAt: '2026-09-19T10:00:00.000Z',
+      dueLocal: '2026-09-19 15:00',
+      timezone: 'America/New_York',
+      allDay: false,
+      list: null,
+    });
+    expect(json.tasks[1]).toMatchObject({ allDay: true });
+  });
+
+  it('ics: the pending reminders as a calendar file', async () => {
+    const users = mockUserRepository(
+      makeUser({ telegramUserId: 777, timezone: 'Asia/Tashkent' }),
+    );
+    const tasks = mockTaskRepository();
+    tasks.find.mockResolvedValue([
+      makeTask({ id: 't1', description: 'Dentist', scheduledAt: NOW }),
+    ]);
+    const notifications = mockNotifications();
+    const exporter = new ExportDataUsecase(users, tasks, notifications);
+
+    const result = await exporter.execute({
+      userId: 'user-1',
+      format: 'ics',
+      now: NOW,
+    });
+    expect(result).toEqual({ filename: 'remy-2026-09-19.ics', tasks: 1 });
+    expect(tasks.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        statuses: [TaskStatus.Pending],
+        kind: 'reminder',
+      }),
+    );
+    expect(tasks.findByUserId).not.toHaveBeenCalled();
+    const sent = notifications.sendDocument.mock.calls[0]![0];
+    expect(sent.filename).toBe('remy-2026-09-19.ics');
+    expect(sent.caption).toContain('1 reminder.');
+    expect(sent.content).toMatch(/^BEGIN:VCALENDAR\r\n/);
+    expect(sent.content).toContain('SUMMARY:Dentist');
+    expect(sent.content).toContain('DTSTART:20260919T100000Z');
+  });
 });
 
 describe('list import', () => {

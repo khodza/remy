@@ -8,6 +8,7 @@ import { describeRecurrence } from './recurrence';
  * JSON is the full record (re-importable later); CSV is for spreadsheets.
  */
 export type ExportInput = {
+  /** The user's profile zone: every local time in the file is written in it. */
   timezone: string;
   settings: UserSettings;
   categories: Category[];
@@ -42,8 +43,16 @@ export function buildJsonExport(input: ExportInput): string {
       status: task.status,
       /** When it is due for the user (a snooze included). */
       dueAt: iso(task.snoozedUntil ?? task.scheduledAt),
+      /** The same, as a wall-clock time in the profile zone (`timezone` above). */
+      dueLocal: localTime(
+        task.snoozedUntil ?? task.scheduledAt,
+        input.timezone,
+      ),
+      allDay: task.allDay,
       scheduledAt: iso(task.scheduledAt),
+      /** The zone the recurrence runs in (not the display zone). */
       timezone: task.timezone,
+      list: task.list,
       recurrence: recurrenceJson(task.recurrence),
       priority: task.priority,
       category: task.categoryId ? (names.get(task.categoryId) ?? null) : null,
@@ -65,6 +74,9 @@ export function buildJsonExport(input: ExportInput): string {
   };
   return `${JSON.stringify(body, null, 2)}\n`;
 }
+
+const localTime = (date: Date | null | undefined, tz: string) =>
+  date ? formatInTimeZone(date, tz, 'yyyy-MM-dd HH:mm') : null;
 
 const CSV_COLUMNS = [
   'title',
@@ -92,20 +104,26 @@ export function csvCell(value: string | null | undefined): string {
 
 export function buildCsvExport(input: ExportInput): string {
   const names = new Map(input.categories.map((c) => [c.id, c.name]));
-  const local = (date: Date | null, tz: string) =>
-    date ? formatInTimeZone(date, tz, 'yyyy-MM-dd HH:mm') : '';
+  // Every time in the profile zone (decision 8.7): the zone the user lives
+  // in now, not the one a task was made in. An all-day task shows its date.
+  const tz = input.timezone;
+  const local = (date: Date | null) => localTime(date, tz) ?? '';
   const rows = input.tasks.map((task) => {
+    const due = task.snoozedUntil ?? task.scheduledAt;
     const cells: Record<(typeof CSV_COLUMNS)[number], string | null> = {
       title: task.description,
       status: task.status,
-      due: local(task.snoozedUntil ?? task.scheduledAt, task.timezone),
-      timezone: task.timezone,
-      repeat: capitalise(describeRecurrence(task.recurrence, task.timezone)),
+      due:
+        task.allDay && !task.snoozedUntil && due
+          ? formatInTimeZone(due, task.timezone, 'yyyy-MM-dd')
+          : local(due),
+      timezone: tz,
+      repeat: capitalise(describeRecurrence(task.recurrence, tz)),
       category: task.categoryId ? (names.get(task.categoryId) ?? null) : null,
       priority: task.priority,
       notes: task.notes,
-      created: local(task.createdAt, task.timezone),
-      completed: local(task.completedAt, task.timezone),
+      created: local(task.createdAt),
+      completed: local(task.completedAt),
       id: task.id,
     };
     return CSV_COLUMNS.map((column) => csvCell(cells[column])).join(',');
@@ -121,7 +139,7 @@ function capitalise(text: string | null): string | null {
 
 /** "remy-2026-09-19.csv" in the user's local date. */
 export function exportFilename(
-  format: 'csv' | 'json',
+  format: 'csv' | 'json' | 'ics',
   now: Date,
   tz: string,
 ): string {

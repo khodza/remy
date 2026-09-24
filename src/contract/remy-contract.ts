@@ -509,7 +509,13 @@ export const CalendarFeed = z.object({
 });
 export type CalendarFeed = z.infer<typeof CalendarFeed>;
 
-export const ExportFormat = z.enum(['csv', 'json']);
+/**
+ * csv: a spreadsheet of every task; json: the full record (settings,
+ * categories, tasks); ics: a calendar file of the pending reminders (the
+ * same events as the feed, as a one-off file). CSV times and the JSON
+ * `dueLocal` are written in the user's profile zone (decision 8.7).
+ */
+export const ExportFormat = z.enum(['csv', 'json', 'ics']);
 export type ExportFormat = z.infer<typeof ExportFormat>;
 
 /** POST /export — the bot sends the file to the user's chat. */
@@ -518,7 +524,7 @@ export type ExportRequest = z.infer<typeof ExportRequest>;
 
 export const ExportResult = z.object({
   filename: z.string(),
-  /** Tasks in the file (pending and done). */
+  /** Tasks in the file: pending and done for csv/json, pending reminders for ics. */
   tasks: z.number().int().nonnegative(),
 });
 export type ExportResult = z.infer<typeof ExportResult>;

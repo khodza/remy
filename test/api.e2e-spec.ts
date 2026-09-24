@@ -717,6 +717,21 @@ describe('Remy API (e2e)', () => {
     expect(sendDocument).toHaveBeenCalledTimes(1);
     expect(sendDocument.mock.calls[0]![0]).toBe(MOCK_TG_ID);
 
+    // A calendar file: the pending reminders, as the feed would show them.
+    const ics = ExportResult.parse(
+      (
+        await authed(api().post('/api/v1/export'))
+          .send({ format: 'ics' })
+          .expect(200)
+      ).body,
+    );
+    expect(ics.filename).toMatch(/^remy-\d{4}-\d{2}-\d{2}\.ics$/);
+    expect(ics.tasks).toBeGreaterThan(0);
+    const icsFile = sendDocument.mock.calls[1]![1] as { fileData: Buffer };
+    expect(Buffer.from(icsFile.fileData).toString('utf8')).toMatch(
+      /^BEGIN:VCALENDAR/,
+    );
+
     await authed(api().post('/api/v1/export'))
       .send({ format: 'pdf' })
       .expect(400);
