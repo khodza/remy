@@ -12,3 +12,4 @@ export * from './snooze-task';
 export * from './skip-occurrence';
 export * from './list-lists';
 export * from './parse-task';
+export * from './show-source';

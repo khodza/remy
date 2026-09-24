@@ -5,7 +5,15 @@ import {
 } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
 import { InvalidInputError } from '@common/errors';
-import { FailedToUpdateTaskError, TaskNotFoundError } from '@domain/task';
+import {
+  FailedToUpdateTaskError,
+  NoSourceMessageError,
+  TaskNotFoundError,
+} from '@domain/task';
+import {
+  NotificationFailedError,
+  SourceMessageGoneError,
+} from '@domain/notification/errors';
 import { InterpretationFailedError, NotATaskError } from '@domain/assistant';
 
 function run(exception: unknown) {
@@ -47,6 +55,26 @@ describe('HttpExceptionFilter', () => {
         message: 'That time has already passed.',
       },
     });
+  });
+
+  it('show-source: no source message is 404, a deleted one 409, a refused reply 502', () => {
+    expect(run(new NoSourceMessageError('not from a chat message'))).toEqual({
+      status: 404,
+      body: {
+        statusCode: 404,
+        error: 'NOT_FOUND',
+        message: 'not from a chat message',
+      },
+    });
+    const gone = run(new SourceMessageGoneError('gone', new Error('400')));
+    expect(gone.status).toBe(409);
+    expect(gone.body['error']).toBe('CONFLICT');
+    expect(String(gone.body['message'])).toMatch(/deleted/);
+    expect(
+      run(
+        new NotificationFailedError('x', new Error('403'), { permanent: true }),
+      ).status,
+    ).toBe(502);
   });
 
   it('never leaks internal messages on 5xx', () => {

@@ -33,3 +33,15 @@ export type SentReminder = {
   /** Telegram message id, so replies to the reminder can be linked to the task. */
   messageId: number | null;
 };
+
+/**
+ * A short bot message that replies to the message a task came from, so the
+ * user can tap the quote and jump to it in the chat.
+ */
+export type SendSourceLinkInput = {
+  chatId: number;
+  /** The task's source.messageId. */
+  replyToMessageId: number;
+  /** The task title, for the text of the reply. */
+  description: string;
+};

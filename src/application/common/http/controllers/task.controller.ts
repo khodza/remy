@@ -5,6 +5,7 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  HttpCode,
   Inject,
   Param,
   Patch,
@@ -33,6 +34,7 @@ import {
   ProcessTextMessageUsecase,
   ProcessVoiceMessageUsecase,
   ReopenTaskUsecase,
+  ShowTaskSourceUsecase,
   SkipOccurrenceUsecase,
   SnoozeTaskUsecase,
   UpdateTaskUsecase,
@@ -48,6 +50,7 @@ import {
   UpdateTaskRequest,
   type CompleteResultWire,
   type DeleteResult,
+  type OkResult,
   type TaskWire,
 } from '@contract/remy-contract';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -79,6 +82,7 @@ export class TaskController {
     private readonly snoozeTaskUsecase: SnoozeTaskUsecase,
     private readonly deleteTaskUsecase: DeleteTaskUsecase,
     private readonly skipOccurrenceUsecase: SkipOccurrenceUsecase,
+    private readonly showTaskSourceUsecase: ShowTaskSourceUsecase,
   ) {}
 
   @Get()
@@ -328,6 +332,22 @@ export class TaskController {
       until: new Date(dto.until),
     });
     return toTaskWire(task);
+  }
+
+  /**
+   * "Where did this come from?": the bot replies to the task's source
+   * message in the chat, so the user can tap the quote and jump to it.
+   */
+  @Post(':id/show-source')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async showSource(
+    @CurrentUser() auth: AuthContext,
+    @Param('id', ParseObjectIdPipe) id: string,
+  ): Promise<OkResult> {
+    await this.requireOwnedTask(id, auth.userId);
+    await this.showTaskSourceUsecase.execute({ taskId: id });
+    return { success: true };
   }
 
   @Delete(':id')

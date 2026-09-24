@@ -33,6 +33,7 @@ function mockNotifications(): jest.Mocked<NotificationGateway> {
     sendReminder: jest.fn(),
     sendDigest: jest.fn(),
     sendDocument: jest.fn().mockResolvedValue(undefined),
+    sendSourceLink: jest.fn(),
   };
 }
 

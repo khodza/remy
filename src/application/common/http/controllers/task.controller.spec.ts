@@ -12,6 +12,7 @@ import type {
   ProcessTextMessageUsecase,
   ProcessVoiceMessageUsecase,
   ReopenTaskUsecase,
+  ShowTaskSourceUsecase,
   SkipOccurrenceUsecase,
   SnoozeTaskUsecase,
   UpdateTaskUsecase,
@@ -53,6 +54,7 @@ describe('TaskController', () => {
   let snoozeTask: Exec<SnoozeTaskUsecase>;
   let deleteTask: Exec<DeleteTaskUsecase>;
   let skipOccurrence: Exec<SkipOccurrenceUsecase>;
+  let showTaskSource: Exec<ShowTaskSourceUsecase>;
   let controller: TaskController;
 
   beforeEach(() => {
@@ -78,6 +80,7 @@ describe('TaskController', () => {
     snoozeTask = { execute: jest.fn() };
     deleteTask = { execute: jest.fn() };
     skipOccurrence = { execute: jest.fn() };
+    showTaskSource = { execute: jest.fn() };
 
     controller = new TaskController(
       taskRepository,
@@ -94,6 +97,7 @@ describe('TaskController', () => {
       snoozeTask as unknown as SnoozeTaskUsecase,
       deleteTask as unknown as DeleteTaskUsecase,
       skipOccurrence as unknown as SkipOccurrenceUsecase,
+      showTaskSource as unknown as ShowTaskSourceUsecase,
     );
   });
 
@@ -284,6 +288,18 @@ describe('TaskController', () => {
       await expect(controller.skip(foreignAuth, id)).rejects.toBeInstanceOf(
         ForbiddenException,
       );
+    });
+
+    it('show-source asks the bot to reply to the source message, owner only', async () => {
+      taskRepository.findById.mockResolvedValue(ownedTask);
+      showTaskSource.execute.mockResolvedValue({ messageId: 501 });
+      await expect(controller.showSource(auth, id)).resolves.toEqual({
+        success: true,
+      });
+      expect(showTaskSource.execute).toHaveBeenCalledWith({ taskId: id });
+      await expect(
+        controller.showSource(foreignAuth, id),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('carries the recent completions, newest first, and drops old ones', async () => {

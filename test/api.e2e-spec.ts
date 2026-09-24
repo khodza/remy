@@ -9,6 +9,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
+import { GrammyError } from 'grammy';
 import { AppModule } from '../src/app.module';
 import { TelegramBotService } from '@infra/bot/bot.service';
 import { SendPendingRemindersUsecase } from '@usecases/task/send-pending-reminders';
@@ -719,6 +720,76 @@ describe('Remy API (e2e)', () => {
     await authed(api().post('/api/v1/export'))
       .send({ format: 'pdf' })
       .expect(400);
+  });
+
+  it('show-source: the bot replies to the message the task came from; 404 without one, 409 when it is gone', async () => {
+    const repo = app.get<TaskRepository>(Domain.Task.Repository);
+    const me = (await authed(api().get('/api/v1/user/me')).expect(200)).body;
+    // A task the bot made from a chat message (the API never sets messageId).
+    const fromChat = await repo.create({
+      userId: me.id,
+      telegramChatId: MOCK_TG_ID,
+      description: 'Pay the plumber',
+      scheduledAt: null,
+      timezone: 'Asia/Tashkent',
+      source: {
+        type: 'forward',
+        originalText: 'Invoice attached, due Friday',
+        messageId: 4242,
+        forwardedFrom: 'Plumber',
+      },
+    });
+    expect(
+      wire.Task.parse(
+        (await authed(api().get(`/api/v1/tasks/${fromChat.id}`)).expect(200))
+          .body,
+      ).source.messageId,
+    ).toBe(4242);
+
+    sendMessage.mockClear();
+    const ok = await authed(
+      api().post(`/api/v1/tasks/${fromChat.id}/show-source`),
+    ).expect(200);
+    expect(ok.body).toEqual({ success: true });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [chatId, text, extra] = sendMessage.mock.calls[0]! as [
+      number,
+      string,
+      { reply_parameters?: { message_id: number } },
+    ];
+    expect(chatId).toBe(MOCK_TG_ID);
+    expect(text).toContain('Pay the plumber');
+    expect(extra.reply_parameters?.message_id).toBe(4242);
+
+    // The message was deleted from the chat since.
+    sendMessage.mockImplementationOnce(async () => {
+      throw new GrammyError(
+        'Call to sendMessage failed',
+        {
+          ok: false,
+          error_code: 400,
+          description: 'Bad Request: message to be replied not found',
+        },
+        'sendMessage',
+        {},
+      );
+    });
+    const gone = await authed(
+      api().post(`/api/v1/tasks/${fromChat.id}/show-source`),
+    ).expect(409);
+    expect(ErrorBody.parse(gone.body).error).toBe('CONFLICT');
+
+    // A Mini App task has no source message.
+    const miniApp = await authed(api().post('/api/v1/tasks/structured'))
+      .send({ description: 'No source' })
+      .expect(201);
+    const none = await authed(
+      api().post(`/api/v1/tasks/${miniApp.body.id}/show-source`),
+    ).expect(404);
+    expect(ErrorBody.parse(none.body).error).toBe('NOT_FOUND');
+    await authed(
+      api().post('/api/v1/tasks/64b64c1f9f1b2c3d4e5f6a7b/show-source'),
+    ).expect(404);
   });
 
   it('natural language: /ai/parse previews drafts; POST /tasks and voice save them; not a task is a 422', async () => {

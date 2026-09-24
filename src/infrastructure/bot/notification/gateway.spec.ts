@@ -1,5 +1,8 @@
 import { GrammyError } from 'grammy';
-import { NotificationFailedError } from '@domain/notification/errors';
+import {
+  NotificationFailedError,
+  SourceMessageGoneError,
+} from '@domain/notification/errors';
 import type { TelegramBotService } from '../bot.service';
 import { NotificationGatewayImpl } from './gateway';
 
@@ -123,5 +126,53 @@ describe('NotificationGatewayImpl', () => {
 
     expect(error).toBeInstanceOf(NotificationFailedError);
     expect((error as NotificationFailedError).permanent).toBe(false);
+  });
+
+  describe('sendSourceLink', () => {
+    const link = {
+      chatId: 12345,
+      replyToMessageId: 321,
+      description: 'Dentist <Q3>',
+    };
+
+    it('replies to the source message and refuses to post without it', async () => {
+      await expect(gateway.sendSourceLink(link)).resolves.toEqual({
+        messageId: 77,
+      });
+      expect(sendMessage).toHaveBeenCalledWith(
+        12345,
+        expect.stringContaining('Dentist &lt;Q3&gt;'),
+        expect.objectContaining({
+          parse_mode: 'HTML',
+          reply_parameters: {
+            message_id: 321,
+            allow_sending_without_reply: false,
+          },
+        }),
+      );
+    });
+
+    it('a deleted source message is SourceMessageGoneError, anything else NotificationFailedError', async () => {
+      sendMessage.mockRejectedValueOnce(
+        telegramError(400, 'Bad Request: message to be replied not found'),
+      );
+      await expect(gateway.sendSourceLink(link)).rejects.toBeInstanceOf(
+        SourceMessageGoneError,
+      );
+      sendMessage.mockRejectedValueOnce(
+        telegramError(400, 'Bad Request: message to reply not found'),
+      );
+      await expect(gateway.sendSourceLink(link)).rejects.toBeInstanceOf(
+        SourceMessageGoneError,
+      );
+      sendMessage.mockRejectedValueOnce(
+        telegramError(403, 'Forbidden: bot was blocked by the user'),
+      );
+      const blocked: unknown = await gateway
+        .sendSourceLink(link)
+        .catch((e: unknown) => e);
+      expect(blocked).toBeInstanceOf(NotificationFailedError);
+      expect((blocked as NotificationFailedError).permanent).toBe(true);
+    });
   });
 });

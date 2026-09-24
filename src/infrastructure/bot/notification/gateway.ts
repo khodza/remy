@@ -6,9 +6,13 @@ import { NotificationGateway } from '@domain/notification/gateway';
 import {
   SendDocumentInput,
   SendReminderInput,
+  SendSourceLinkInput,
   SentReminder,
 } from '@domain/notification/gateway/types';
-import { NotificationFailedError } from '@domain/notification/errors';
+import {
+  NotificationFailedError,
+  SourceMessageGoneError,
+} from '@domain/notification/errors';
 import type { Digest } from '@domain/rhythm';
 import { TelegramBotService } from '../bot.service';
 import { presentDigest } from '../presenters/rhythm.presenter';
@@ -90,6 +94,47 @@ export class NotificationGatewayImpl implements NotificationGateway {
         (error.error_code === 400 || error.error_code === 403);
       throw new NotificationFailedError(
         `Failed to send ${input.filename}`,
+        error,
+        { permanent },
+      );
+    }
+  }
+
+  public async sendSourceLink(
+    input: SendSourceLinkInput,
+  ): Promise<SentReminder> {
+    try {
+      const message = await this.botService
+        .getBot()
+        .api.sendMessage(
+          input.chatId,
+          `↑ This is where <b>${escapeHtml(input.description)}</b> came from.`,
+          {
+            parse_mode: 'HTML',
+            // Fail instead of posting a reply to nothing.
+            reply_parameters: {
+              message_id: input.replyToMessageId,
+              allow_sending_without_reply: false,
+            },
+          },
+        );
+      return { messageId: message?.message_id ?? null };
+    } catch (error) {
+      if (
+        error instanceof GrammyError &&
+        error.error_code === 400 &&
+        /repl(y|ied).*not found/i.test(error.description)
+      ) {
+        throw new SourceMessageGoneError(
+          `Source message ${input.replyToMessageId} is gone`,
+          error,
+        );
+      }
+      const permanent =
+        error instanceof GrammyError &&
+        (error.error_code === 400 || error.error_code === 403);
+      throw new NotificationFailedError(
+        'Failed to send the source link',
         error,
         { permanent },
       );

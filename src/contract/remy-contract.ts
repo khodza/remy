@@ -243,7 +243,13 @@ export type Recurrence = NonNullable<Task['recurrence']>;
 export const DeleteResult = z.object({ success: z.boolean() });
 export type DeleteResult = z.infer<typeof DeleteResult>;
 
-/** A plain acknowledgement (POST /tasks/:id/show-source). */
+/**
+ * A plain acknowledgement. POST /tasks/:id/show-source: the bot has replied
+ * in the chat to the message the task came from (`source.messageId`), so the
+ * user can tap the quote and jump to it. 404 when the task has no source
+ * message (Mini App, import: `source.messageId` is null), 409 when that
+ * message was deleted from the chat, 502 when Telegram refused the reply.
+ */
 export const OkResult = z.object({ success: z.boolean() });
 export type OkResult = z.infer<typeof OkResult>;
 
@@ -597,6 +603,12 @@ export const endpoints = {
   delayTask: { method: 'POST', path: '/tasks/:id/delay', auth: 'jwt' },
   snoozeTask: { method: 'POST', path: '/tasks/:id/snooze', auth: 'jwt' },
   deleteTask: { method: 'DELETE', path: '/tasks/:id', auth: 'jwt' },
+  /** The bot replies to the task's source message in the chat (OkResult, 200). */
+  showTaskSource: {
+    method: 'POST',
+    path: '/tasks/:id/show-source',
+    auth: 'jwt',
+  },
   parseText: { method: 'POST', path: '/ai/parse', auth: 'jwt' },
   parseList: { method: 'POST', path: '/ai/parse-list', auth: 'jwt' },
   importTasks: { method: 'POST', path: '/tasks/import', auth: 'jwt' },

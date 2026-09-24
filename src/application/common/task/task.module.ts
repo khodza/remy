@@ -19,6 +19,7 @@ import {
   SkipOccurrenceUsecase,
   ListListsUsecase,
   ParseTaskUsecase,
+  ShowTaskSourceUsecase,
 } from '@usecases/task';
 import { ListCategoriesUsecase } from '@usecases/category';
 import { UserModule } from '../user/user.module';
@@ -55,6 +56,7 @@ import { NotificationModule } from '../notification/notification.module';
     SkipOccurrenceUsecase,
     ListListsUsecase,
     ParseTaskUsecase,
+    ShowTaskSourceUsecase,
     ListCategoriesUsecase,
   ],
   exports: [
@@ -73,6 +75,7 @@ import { NotificationModule } from '../notification/notification.module';
     SkipOccurrenceUsecase,
     ListListsUsecase,
     ParseTaskUsecase,
+    ShowTaskSourceUsecase,
   ],
 })
 export class TaskModule {}

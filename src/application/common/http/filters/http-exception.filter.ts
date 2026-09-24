@@ -11,10 +11,14 @@ import { InvalidInputError } from '@common/errors';
 import {
   FailedToCreateTaskError,
   FailedToUpdateTaskError,
+  NoSourceMessageError,
   TaskNotFoundError,
 } from '@domain/task';
 import { FailedToSaveUserError, UserNotFoundError } from '@domain/user';
-import { NotificationFailedError } from '@domain/notification/errors';
+import {
+  NotificationFailedError,
+  SourceMessageGoneError,
+} from '@domain/notification/errors';
 import { TranscriptionFailedError } from '@domain/ai';
 import { InterpretationFailedError, NotATaskError } from '@domain/assistant';
 import { CategoryNotFoundError } from '@usecases/category/errors';
@@ -73,9 +77,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (
       exception instanceof TaskNotFoundError ||
       exception instanceof UserNotFoundError ||
-      exception instanceof CategoryNotFoundError
+      exception instanceof CategoryNotFoundError ||
+      // Nothing to point at: the task was not made from a chat message.
+      exception instanceof NoSourceMessageError
     ) {
       return httpBody(HttpStatus.NOT_FOUND, exception.message);
+    }
+    // The task had a source message once, but it was deleted from the chat.
+    if (exception instanceof SourceMessageGoneError) {
+      return httpBody(
+        HttpStatus.CONFLICT,
+        'The message this task came from was deleted from the chat.',
+      );
     }
 
     // The text was read fine but holds no new task (chat, garbage, a time
