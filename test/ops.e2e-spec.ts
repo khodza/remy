@@ -113,6 +113,7 @@ describe('Remy ops (e2e, webhook mode)', () => {
   });
 
   it('health: 200 with Mongo and Telegram up, getMe cached, request id echoed', async () => {
+    const getMeBefore = apiCalls.filter((c) => c.method === 'getMe').length;
     const res = await http()
       .get('/api/v1/health')
       .set('x-request-id', 'e2e-health-1')
@@ -127,7 +128,9 @@ describe('Remy ops (e2e, webhook mode)', () => {
     });
 
     await http().get('/api/v1/health').expect(200);
-    expect(apiCalls.filter((c) => c.method === 'getMe')).toHaveLength(1);
+    expect(apiCalls.filter((c) => c.method === 'getMe')).toHaveLength(
+      getMeBefore + 1,
+    );
   });
 
   it('webhook: 401 without the secret header, nothing handled', async () => {
@@ -138,7 +141,7 @@ describe('Remy ops (e2e, webhook mode)', () => {
       .set(WEBHOOK_SECRET_HEADER, 'not-the-secret-0123456789')
       .send(strangerHelp)
       .expect(401);
-    expect(apiCalls.length).toBe(before);
+    expect(apiCalls.slice(before).map((c) => c.method)).toEqual([]);
   });
 
   it('webhook: handles an update with the secret (owner lock answers a stranger)', async () => {

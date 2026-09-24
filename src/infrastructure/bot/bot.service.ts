@@ -122,6 +122,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     express.post(path, this.webhookHandler(secret));
 
     try {
+      // Fetch the bot's identity now rather than on the first update, so an
+      // unauthorised request never triggers a Telegram call.
+      await this.bot.init();
       await this.bot.api.setWebhook(url, { secret_token: secret });
       this.logger.log(`Telegram updates: webhook at ${url}`);
     } catch (error) {
