@@ -36,6 +36,7 @@ const reply = (over: Partial<AssistantModelOutput>): AssistantModelOutput => ({
   tasks: [],
   query_range: null,
   query_search: null,
+  list: null,
   targets: [],
   due_local: null,
   in_minutes: null,
@@ -45,17 +46,20 @@ const reply = (over: Partial<AssistantModelOutput>): AssistantModelOutput => ({
   reply: null,
   question: null,
   options: [],
+  timezone: null,
   ...over,
 });
 const draft = (over: Partial<AssistantModelOutput['tasks'][number]>) => ({
   title: 'x',
   due_local: null,
+  all_day: null,
   in_minutes: null,
   recurrence: null,
   priority: 'normal' as const,
   category: null,
   lead_minutes: null,
   notes: null,
+  list: null,
   ...over,
 });
 
@@ -93,6 +97,8 @@ describe('interpretAssistantOutput', () => {
           categoryName: null,
           leadMinutes: null,
           notes: null,
+          allDay: false,
+          list: null,
         },
         {
           title: 'Call mom',
@@ -102,6 +108,8 @@ describe('interpretAssistantOutput', () => {
           categoryName: 'Personal',
           leadMinutes: null,
           notes: null,
+          allDay: false,
+          list: null,
         },
         {
           title: 'Dentist',
@@ -111,6 +119,8 @@ describe('interpretAssistantOutput', () => {
           categoryName: null,
           leadMinutes: 30,
           notes: null,
+          allDay: false,
+          list: null,
         },
       ],
     });
@@ -124,6 +134,7 @@ describe('interpretAssistantOutput', () => {
       by_weekday: [1, 4, 9],
       last_day_of_month: null,
       until_local: '2026-12-31T23:59:59',
+      count: null,
     };
     const result = interpretAssistantOutput(
       reply({
@@ -153,6 +164,137 @@ describe('interpretAssistantOutput', () => {
     });
   });
 
+  describe('"× N times" and all-day (2.4.0)', () => {
+    const daily = (count: number | null) => ({
+      type: 'daily' as const,
+      interval_days: null,
+      interval: null,
+      by_weekday: null,
+      last_day_of_month: null,
+      until_local: null,
+      count,
+    });
+    const created = (raw: AssistantModelOutput, text = ctx.text) => {
+      const r = interpretAssistantOutput(raw, { ...ctx, text });
+      if (r.intent !== 'create')
+        throw new Error(`expected create, got ${r.intent}`);
+      return r.tasks[0]!;
+    };
+
+    it('keeps a sane count and drops a nonsense one', () => {
+      const at = '2026-09-19T09:00:00';
+      expect(
+        created(
+          reply({
+            intent: 'create',
+            tasks: [
+              draft({ title: 'pills', due_local: at, recurrence: daily(5) }),
+            ],
+          }),
+        ).recurrence,
+      ).toEqual({ type: 'daily', count: 5 });
+      for (const bad of [0, -3, 5000]) {
+        expect(
+          created(
+            reply({
+              intent: 'create',
+              tasks: [
+                draft({
+                  title: 'pills',
+                  due_local: at,
+                  recurrence: daily(bad),
+                }),
+              ],
+            }),
+          ).recurrence,
+        ).toEqual({ type: 'daily' });
+      }
+    });
+
+    it('a date with no time is an all-day task at 09:00 local', () => {
+      const task = created(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'pay rent',
+              due_local: '2026-09-25T14:00:00', // the model picked an odd time
+              all_day: true,
+            }),
+          ],
+        }),
+        'pay rent on friday',
+      );
+      expect(task).toMatchObject({
+        allDay: true,
+        dueAt: new Date('2026-09-25T04:00:00Z'), // Fri 09:00 Tashkent
+      });
+    });
+
+    it('a clock time or a time of day in the message overrides all_day', () => {
+      for (const text of [
+        'pay rent friday at 5',
+        'pay rent friday evening',
+        'оплатить аренду в пятницу вечером',
+      ]) {
+        const task = created(
+          reply({
+            intent: 'create',
+            tasks: [
+              draft({
+                title: 'pay rent',
+                due_local: '2026-09-25T17:00:00',
+                all_day: true,
+              }),
+            ],
+          }),
+          text,
+        );
+        expect(task).toMatchObject({
+          allDay: false,
+          dueAt: new Date('2026-09-25T12:00:00Z'),
+        });
+      }
+    });
+
+    it('an all-day task for today is fine after 09:00; one for a day that is over is a question', () => {
+      const today = created(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'pay rent',
+              due_local: '2026-09-18T09:00:00',
+              all_day: true,
+            }),
+          ],
+        }),
+        'pay rent today',
+      );
+      expect(today).toMatchObject({
+        allDay: true,
+        dueAt: new Date('2026-09-18T04:00:00Z'),
+      });
+      const yesterday = interpretAssistantOutput(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'pay rent',
+              due_local: '2026-09-17T09:00:00',
+              all_day: true,
+            }),
+          ],
+        }),
+        { ...ctx, text: 'pay rent yesterday' },
+      );
+      expect(yesterday).toMatchObject({
+        intent: 'unclear',
+        question: expect.stringContaining('already passed'),
+      });
+    });
+  });
+
   describe('safety nets for model slips', () => {
     const weekly = (by: number[] | null) => ({
       type: 'weekly' as const,
@@ -161,6 +303,7 @@ describe('interpretAssistantOutput', () => {
       by_weekday: by,
       last_day_of_month: null,
       until_local: null,
+      count: null,
     });
     const firstDue = (raw: AssistantModelOutput) => {
       const r = interpretAssistantOutput(raw, ctx);
@@ -555,18 +698,121 @@ describe('interpretAssistantOutput', () => {
     ).toBe('unclear');
   });
 
+  describe('named lists', () => {
+    it('create keeps the list name the model picked, raw', () => {
+      const r = interpretAssistantOutput(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({ title: 'milk', list: ' Shopping ' }),
+            draft({ title: 'x' }),
+          ],
+        }),
+        { ...ctx, text: 'add milk to the shopping list' },
+      );
+      if (r.intent !== 'create') throw new Error('expected create');
+      expect(r.tasks.map((t) => t.list)).toEqual(['Shopping', null]);
+    });
+
+    it('a list query browses the whole list unless a range was asked for', () => {
+      expect(
+        interpretAssistantOutput(reply({ intent: 'query', list: 'shopping' }), {
+          ...ctx,
+          text: "what's on my shopping list?",
+        }),
+      ).toEqual({
+        intent: 'query',
+        range: 'all',
+        search: null,
+        list: 'shopping',
+      });
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'query', list: 'shopping', query_range: 'today' }),
+          { ...ctx, text: 'anything from the shopping list today?' },
+        ),
+      ).toMatchObject({ range: 'today', list: 'shopping' });
+    });
+
+    it('"clear the shopping list" completes the list without numbered targets; an unnamed list asks', () => {
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'complete', list: 'shopping' }),
+          { ...ctx, text: 'clear the shopping list' },
+        ),
+      ).toEqual({ intent: 'complete', targetIds: [], list: 'shopping' });
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'delete', list: 'groceries', targets: [3] }),
+          { ...ctx, text: 'delete my groceries and the plov thing' },
+        ),
+      ).toEqual({
+        intent: 'delete',
+        targetIds: ['id-plov'],
+        list: 'groceries',
+      });
+      // The model named a list the message never mentions: not trusted.
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'complete', list: 'shopping' }),
+          { ...ctx, text: 'all done' },
+        ),
+      ).toMatchObject({ intent: 'unclear' });
+    });
+  });
+
+  describe('set_timezone', () => {
+    const tz = (timezone: string | null, text: string) =>
+      interpretAssistantOutput(reply({ intent: 'set_timezone', timezone }), {
+        ...ctx,
+        text,
+      });
+
+    it('accepts a known zone the message points at, spelled canonically', () => {
+      expect(tz('europe/berlin', "I'm in Berlin now")).toEqual({
+        intent: 'set_timezone',
+        timezone: 'Europe/Berlin',
+      });
+      expect(tz('Asia/Tashkent', 'set my timezone to tashkent please')).toEqual(
+        { intent: 'set_timezone', timezone: 'Asia/Tashkent' },
+      );
+      // A bare place name (the answer to "send me your city"), even translated.
+      expect(tz('Asia/Tashkent', 'Ташкент')).toMatchObject({
+        timezone: 'Asia/Tashkent',
+      });
+      expect(tz('UTC', 'use utc')).toMatchObject({ timezone: 'UTC' });
+    });
+
+    it('asks instead of guessing: unknown zone, or a zone the message never mentions', () => {
+      expect(tz('Europe/Atlantis', "I'm in Atlantis")).toMatchObject({
+        intent: 'unclear',
+        question: expect.stringContaining('Which timezone'),
+      });
+      expect(tz(null, 'change my timezone')).toMatchObject({
+        intent: 'unclear',
+      });
+      expect(
+        tz(
+          'Europe/Berlin',
+          'remind me to call the dentist about the appointment tomorrow',
+        ),
+      ).toMatchObject({ intent: 'unclear' });
+    });
+  });
+
   it('query defaults to today; chat and unclear pass through, options capped at 4', () => {
     expect(interpretAssistantOutput(reply({ intent: 'query' }), ctx)).toEqual({
       intent: 'query',
       range: 'today',
       search: null,
+      list: null,
     });
     expect(
       interpretAssistantOutput(
         reply({ intent: 'query', query_range: 'all', query_search: ' visa ' }),
         ctx,
       ),
-    ).toEqual({ intent: 'query', range: 'all', search: 'visa' });
+    ).toEqual({ intent: 'query', range: 'all', search: 'visa', list: null });
     expect(
       interpretAssistantOutput(
         reply({ intent: 'chat', reply: 'Anytime!' }),

@@ -7,7 +7,12 @@ import {
   TaskStatus,
 } from '@domain/task/repository';
 import type { User } from '@domain/user';
-import type { EveningReview, MorningBrief, WeeklyWrap } from '@domain/rhythm';
+import type {
+  EveningReview,
+  MorningBrief,
+  PinnedAgenda,
+  WeeklyWrap,
+} from '@domain/rhythm';
 import type { CalendarEventsSource } from '@domain/integrations/google-calendar';
 import { Domain } from '@common/tokens';
 import { dayBoundsInZone } from '@common/day-bounds';
@@ -38,24 +43,26 @@ export class DigestBuilder {
   ): Promise<MorningBrief> {
     const { start, end } = dayBoundsInZone(now, timezone);
     const pending = { userId: user.id, statuses: [TaskStatus.Pending] };
-    const [today, overdue, inbox, calendarEvents] = await Promise.all([
-      this.tasks.find({
-        ...pending,
-        kind: 'reminder',
-        dueAfter: new Date(start.getTime() - 1),
-        dueAtOrBefore: new Date(end.getTime() - 1),
-        sort: 'dueAt',
-      }),
-      this.tasks.find({
-        ...pending,
-        kind: 'reminder',
-        dueAtOrBefore: new Date(start.getTime() - 1),
-        sort: 'dueAt',
-      }),
-      this.tasks.find({ ...pending, kind: 'todo', sort: 'createdAtDesc' }),
-      // Never throws: a Google outage costs the calendar block, not the brief.
-      this.calendar?.eventsForDay(user, timezone, now) ?? [],
-    ]);
+    const [today, overdue, inbox, undelivered, calendarEvents] =
+      await Promise.all([
+        this.tasks.find({
+          ...pending,
+          kind: 'reminder',
+          dueAfter: new Date(start.getTime() - 1),
+          dueAtOrBefore: new Date(end.getTime() - 1),
+          sort: 'dueAt',
+        }),
+        this.tasks.find({
+          ...pending,
+          kind: 'reminder',
+          dueAtOrBefore: new Date(start.getTime() - 1),
+          sort: 'dueAt',
+        }),
+        this.tasks.find({ ...pending, kind: 'todo', sort: 'createdAtDesc' }),
+        this.tasks.find({ ...pending, deliveryFailed: true, sort: 'dueAt' }),
+        // Never throws: a Google outage costs the calendar block, not the brief.
+        this.calendar?.eventsForDay(user, timezone, now) ?? [],
+      ]);
     return {
       kind: 'brief',
       chatId: user.telegramUserId,
@@ -64,10 +71,57 @@ export class DigestBuilder {
       firstName: user.firstName,
       today,
       overdue,
+      undelivered,
       inbox: inbox.slice(0, INBOX_PREVIEW),
       inboxCount: inbox.length,
       scheduled,
       ...(calendarEvents.length > 0 ? { calendarEvents } : {}),
+    };
+  }
+
+  public async buildPinnedAgenda(
+    user: User,
+    timezone: string,
+    now: Date,
+  ): Promise<PinnedAgenda> {
+    const { start, end } = dayBoundsInZone(now, timezone);
+    const pending = { userId: user.id, statuses: [TaskStatus.Pending] };
+    const lastOfYesterday = new Date(start.getTime() - 1);
+    const [today, done, overdue, inbox] = await Promise.all([
+      this.tasks.find({
+        ...pending,
+        kind: 'reminder',
+        dueAfter: lastOfYesterday,
+        dueAtOrBefore: new Date(end.getTime() - 1),
+        sort: 'dueAt',
+      }),
+      this.tasks.find({
+        userId: user.id,
+        statuses: [TaskStatus.Completed],
+        kind: 'reminder',
+        completedAtOrAfter: start,
+        sort: 'dueAt',
+      }),
+      this.tasks.find({
+        ...pending,
+        kind: 'reminder',
+        dueAtOrBefore: lastOfYesterday,
+        sort: 'dueAt',
+      }),
+      this.tasks.find({ ...pending, kind: 'todo', sort: 'createdAtDesc' }),
+    ]);
+    return {
+      chatId: user.telegramUserId,
+      timezone,
+      now,
+      today,
+      // Only what was due today: a done task from last week is not today's.
+      doneToday: done.filter((task) => {
+        const due = effectiveDueAt(task);
+        return due !== null && due >= start && due < end;
+      }),
+      overdueBefore: overdue.length,
+      inboxCount: inbox.length,
     };
   }
 

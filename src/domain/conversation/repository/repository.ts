@@ -49,6 +49,15 @@ export interface ConversationRepository {
     outcome: ReviewOutcome,
     newDueAt: Date | null,
   ): Promise<ReviewState | null>;
+  /**
+   * Undo of a row action: the items become open again so their buttons
+   * come back. Returns the updated review, or null when it is unknown.
+   */
+  reopenReviewItems(
+    chatId: number,
+    messageId: number,
+    taskIds: string[],
+  ): Promise<ReviewState | null>;
 
   /**
    * "Delete all my data": message links, conversation state, undo records

@@ -62,6 +62,8 @@ export const envSchema = z
     OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
     /** Model for the chat intent router. Must support structured outputs. */
     OPENAI_ASSISTANT_MODEL: z.string().min(1).default('gpt-4o-mini'),
+    /** Text-to-speech model for the spoken morning brief (settings.voiceBrief). */
+    OPENAI_TTS_MODEL: z.string().min(1).default('gpt-4o-mini-tts'),
     MONGODB_URI: z.string().min(1).default('mongodb://localhost:27017/remy'),
 
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),

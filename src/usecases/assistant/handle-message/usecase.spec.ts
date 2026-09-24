@@ -19,6 +19,7 @@ import type { MarkCompleteUsecase } from '../../task/mark-complete';
 import type { DeleteTaskUsecase } from '../../task/delete-task';
 import type { SnoozeTaskUsecase } from '../../task/snooze-task';
 import type { UpdateTaskUsecase } from '../../task/update-task';
+import type { UpdateTimezoneUsecase } from '../../user/update-timezone';
 
 describe('HandleMessageUsecase', () => {
   const now = new Date('2026-09-18T09:47:00Z'); // 14:47 Tashkent
@@ -48,6 +49,7 @@ describe('HandleMessageUsecase', () => {
   let deleteTask: { execute: jest.Mock };
   let snoozeTask: { execute: jest.Mock };
   let updateTask: { execute: jest.Mock };
+  let updateTimezone: { execute: jest.Mock };
   let usecase: HandleMessageUsecase;
 
   const input = (
@@ -97,6 +99,7 @@ describe('HandleMessageUsecase', () => {
         makeTask({ id: taskId, ...rest }),
       ),
     };
+    updateTimezone = { execute: jest.fn().mockResolvedValue(makeUser()) };
     const users = mockUserRepository(
       makeUser({
         categories: [
@@ -120,6 +123,8 @@ describe('HandleMessageUsecase', () => {
       snoozeTask as unknown as SnoozeTaskUsecase,
       updateTask as unknown as UpdateTaskUsecase,
       new UndoRecorder(conversations),
+      users,
+      updateTimezone as unknown as UpdateTimezoneUsecase,
     );
   });
   afterEach(() => jest.useRealTimers());
@@ -268,6 +273,8 @@ describe('HandleMessageUsecase', () => {
         notes: 'bring towel',
         scheduledAt: dueAt,
         timezone: 'Asia/Tashkent',
+        allDay: false,
+        list: null,
         recurrence: { type: 'weekly', byWeekday: [1, 4], anchorAt: dueAt },
         priority: 'high',
         categoryId: healthId,
@@ -430,7 +437,12 @@ describe('HandleMessageUsecase', () => {
   });
 
   it('query: "tomorrow" asks the repository for the user\'s next local day', async () => {
-    interpretAs({ intent: 'query', range: 'tomorrow', search: null });
+    interpretAs({
+      intent: 'query',
+      range: 'tomorrow',
+      search: null,
+      list: null,
+    });
     tasks.find
       .mockResolvedValueOnce([mom, dentist]) // dated candidates
       .mockResolvedValueOnce([plov]) // todo candidates
@@ -454,10 +466,121 @@ describe('HandleMessageUsecase', () => {
   });
 
   it('query with a search filters titles and notes', async () => {
-    interpretAs({ intent: 'query', range: 'all', search: 'PLOV' });
+    interpretAs({ intent: 'query', range: 'all', search: 'PLOV', list: null });
     const result = await usecase.execute(input());
     if (result.kind !== 'agenda') throw new Error('expected agenda');
     expect(result.tasks.map((t) => t.id)).toEqual(['plov']);
+  });
+
+  describe('named lists', () => {
+    it('a draft on a list is saved with the normalised list name, and the model sees the existing lists', async () => {
+      tasks.listSummaries.mockResolvedValue([
+        { name: 'shopping', pending: 2, completed: 0 },
+      ]);
+      interpretAs({
+        intent: 'create',
+        tasks: [
+          {
+            title: 'Milk',
+            dueAt: null,
+            recurrence: null,
+            priority: 'normal',
+            categoryName: null,
+            leadMinutes: null,
+            notes: null,
+            list: 'The Shopping List',
+          },
+        ],
+      });
+      await usecase.execute(input({ text: 'add milk to the shopping list' }));
+      expect(seen().lists).toEqual(['shopping']);
+      expect(tasks.create).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'Milk', list: 'shopping' }),
+      );
+    });
+
+    it('a list query asks the repository for that list, todos included', async () => {
+      const milk = makeTask({
+        id: 'milk',
+        scheduledAt: null,
+        list: 'shopping',
+      });
+      interpretAs({
+        intent: 'query',
+        range: 'all',
+        search: null,
+        list: 'Shopping',
+      });
+      tasks.find
+        .mockResolvedValueOnce([mom, dentist])
+        .mockResolvedValueOnce([plov])
+        .mockResolvedValueOnce([milk]);
+      const result = await usecase.execute(
+        input({ text: "what's on my shopping list?" }),
+      );
+      expect(tasks.find).toHaveBeenLastCalledWith({
+        userId: 'user-1',
+        statuses: [TaskStatus.Pending],
+        sort: 'dueAt',
+        list: 'shopping',
+      });
+      expect(result).toMatchObject({
+        kind: 'agenda',
+        list: 'shopping',
+        tasks: [milk],
+      });
+    });
+
+    it('"clear the shopping list" completes every open item on it, with one undo', async () => {
+      const milk = makeTask({
+        id: 'milk',
+        scheduledAt: null,
+        list: 'shopping',
+      });
+      const eggs = makeTask({
+        id: 'eggs',
+        scheduledAt: null,
+        list: 'shopping',
+      });
+      interpretAs({ intent: 'complete', targetIds: [], list: 'shopping' });
+      tasks.find
+        .mockResolvedValueOnce([mom, dentist])
+        .mockResolvedValueOnce([plov])
+        .mockResolvedValueOnce([milk, eggs]);
+      const result = await usecase.execute(
+        input({ text: 'clear the shopping list' }),
+      );
+      if (result.kind !== 'completed') throw new Error('expected completed');
+      expect(markComplete.execute.mock.calls.map((c) => c[0])).toEqual([
+        { taskId: 'milk' },
+        { taskId: 'eggs' },
+      ]);
+      expect(conversations.undos.get(result.undoId)?.label).toBe(
+        'completed 2 tasks',
+      );
+    });
+  });
+
+  it('set_timezone: records the old zone for Undo before changing it', async () => {
+    interpretAs({ intent: 'set_timezone', timezone: 'Europe/Berlin' });
+    const result = await usecase.execute(input({ text: "I'm in Berlin now" }));
+    expect(result).toMatchObject({
+      kind: 'timezone_changed',
+      timezone: 'Europe/Berlin',
+      previous: 'UTC',
+    });
+    if (result.kind !== 'timezone_changed') throw new Error('expected');
+    expect(conversations.undos.get(result.undoId)).toMatchObject({
+      restoreTimezone: 'UTC',
+      label: 'set the timezone to Europe/Berlin',
+    });
+    expect(updateTimezone.execute).toHaveBeenCalledWith({
+      userId: 'user-1',
+      timezone: 'Europe/Berlin',
+    });
+    expect(conversations.saveUndo.mock.invocationCallOrder[0]).toBeLessThan(
+      updateTimezone.execute.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('unclear: remembers the question; the next non-question clears it', async () => {

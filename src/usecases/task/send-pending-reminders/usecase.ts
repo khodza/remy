@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { addMinutes } from 'date-fns';
 import { TaskRepository } from '@domain/task/repository';
 import { NotificationGateway } from '@domain/notification/gateway';
@@ -14,8 +14,28 @@ import { isInQuietHours, quietHoursEnd } from '@common/quiet-hours';
 import { computeLatestOccurrence } from '@common/recurrence';
 import { SendPendingRemindersOutput } from './types';
 
-/** How long to hold a task after a transient send failure. */
-const RETRY_DELAY_MINUTES = 2;
+/**
+ * Holds after the 1st, 2nd, … transient send failure of one fire time.
+ * After the last one the task is marked failed-to-deliver instead of being
+ * retried forever; the next morning brief says so.
+ */
+export const RETRY_BACKOFF_MINUTES = [2, 4, 8, 16, 32] as const;
+export const MAX_DELIVERY_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
+/**
+ * High-priority tasks nudge harder than the user's normal steps: sooner
+ * and one more time. Low priority never nudges; normal uses the settings.
+ */
+export const HIGH_PRIORITY_STEPS_MINUTES = [10, 30, 60] as const;
+
+/** The nudge delays (minutes after the reminder) this task gets. */
+export function escalationStepsFor(
+  task: Pick<ScheduledTask, 'priority'>,
+  settings: UserSettings,
+): number[] {
+  if (!settings.escalation.enabled || task.priority === 'low') return [];
+  if (task.priority === 'high') return [...HIGH_PRIORITY_STEPS_MINUTES];
+  return settings.escalation.stepsMinutes;
+}
 /** Safety valve so one run can't loop forever if claims never stop. */
 const MAX_SENDS_PER_RUN = 500;
 
@@ -24,6 +44,7 @@ type Owner = { settings: UserSettings; timezone: string };
 
 @Injectable()
 export class SendPendingRemindersUsecase {
+  private readonly logger = new Logger(SendPendingRemindersUsecase.name);
   constructor(
     @Inject(Domain.Task.Repository)
     private readonly taskRepository: TaskRepository,
@@ -53,7 +74,7 @@ export class SendPendingRemindersUsecase {
         // can never send the same task.
         claimed = await this.taskRepository.claimDueReminder(now);
       } catch (error) {
-        console.error('Failed to claim a due reminder:', error);
+        this.logger.error('Failed to claim a due reminder', error);
         break;
       }
       if (!claimed) break;
@@ -107,6 +128,7 @@ export class SendPendingRemindersUsecase {
           description: task.description,
           kind: ping,
           dueAt,
+          allDay: task.allDay,
           // Shown in the zone the user lives in now, not the one the task
           // was made in; the series itself keeps running on task.timezone.
           timezone: owner.timezone,
@@ -116,6 +138,12 @@ export class SendPendingRemindersUsecase {
         });
         sentCount++;
 
+        if (task.reminderAttempts > 0) {
+          // Delivered after retries: the next fire time starts clean.
+          await this.taskRepository
+            .update({ id: task.id, reminderAttempts: 0 })
+            .catch(() => undefined);
+        }
         await this.scheduleNextNudge(task, ping, owner.settings, now);
 
         // Lets "in 2 hours" as a reply to this reminder find its task.
@@ -128,34 +156,42 @@ export class SendPendingRemindersUsecase {
               kind: 'reminder',
             })
             .catch((linkError: unknown) => {
-              console.error(
-                `Failed to link reminder message for task ${task.id}:`,
+              this.logger.error(
+                `Failed to link reminder message for task ${task.id}`,
                 linkError,
               );
             });
         }
       } catch (error) {
-        console.error(`Failed to send reminder for task ${task.id}:`, error);
+        this.logger.error(`Failed to send reminder for task ${task.id}`, error);
         failedCount++;
 
         // Permanent failures (blocked bot, chat gone) keep the claim so we
-        // don't retry every minute. Transient ones release it with a short
-        // hold so the next run tries again.
+        // don't retry every minute. Transient ones release it with a hold
+        // that doubles each time; after the last attempt the task is marked
+        // failed-to-deliver (claim kept) and the morning brief lists it.
         if (error instanceof NotificationFailedError && error.permanent) {
           continue;
         }
-        await this.taskRepository
-          .releaseReminderClaim(
-            task.id,
-            previousLastSentAt,
-            addMinutes(now, RETRY_DELAY_MINUTES),
-          )
-          .catch((releaseError: unknown) => {
-            console.error(
-              `Failed to release claim on task ${task.id}:`,
-              releaseError,
+        const attempt = task.reminderAttempts + 1;
+        const hold = RETRY_BACKOFF_MINUTES[attempt - 1];
+        try {
+          if (hold === undefined || attempt >= MAX_DELIVERY_ATTEMPTS) {
+            await this.taskRepository.markDeliveryFailed(task.id, now);
+          } else {
+            await this.taskRepository.releaseReminderClaim(
+              task.id,
+              previousLastSentAt,
+              addMinutes(now, hold),
+              { countAttempt: true },
             );
-          });
+          }
+        } catch (releaseError) {
+          this.logger.error(
+            `Failed to release claim on task ${task.id}`,
+            releaseError,
+          );
+        }
       }
     }
 
@@ -173,11 +209,11 @@ export class SendPendingRemindersUsecase {
     now: Date,
   ): Promise<void> {
     if (ping === 'heads_up') return;
-    const steps = settings.escalation.stepsMinutes;
+    const steps = escalationStepsFor(task, settings);
     try {
       if (ping === 'due') {
         const first = steps[0];
-        if (!nudgesAllowed(task, settings) || first === undefined) return;
+        if (first === undefined) return;
         await this.taskRepository.update({
           id: task.id,
           nudgeAt: addMinutes(now, first),
@@ -199,8 +235,8 @@ export class SendPendingRemindersUsecase {
       });
     } catch (error) {
       // The reminder itself went out; losing a nudge is acceptable.
-      console.error(
-        `Failed to schedule the next nudge for task ${task.id}:`,
+      this.logger.error(
+        `Failed to schedule the next nudge for task ${task.id}`,
         error,
       );
     }
@@ -252,11 +288,11 @@ export class SendPendingRemindersUsecase {
             snoozedUntil: null,
           });
         } catch (error) {
-          console.error(`Failed to roll over task ${task.id}:`, error);
+          this.logger.error(`Failed to roll over task ${task.id}`, error);
         }
       }
     } catch (error) {
-      console.error('Failed to fetch overdue recurring tasks:', error);
+      this.logger.error('Failed to fetch overdue recurring tasks', error);
     }
   }
 }
@@ -278,5 +314,5 @@ function classify(task: ScheduledTask): Ping {
 }
 
 function nudgesAllowed(task: ScheduledTask, settings: UserSettings): boolean {
-  return settings.escalation.enabled && task.priority !== 'low';
+  return escalationStepsFor(task, settings).length > 0;
 }

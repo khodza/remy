@@ -13,6 +13,11 @@ export type MorningBrief = {
   today: Task[];
   /** Pending reminders due before today. */
   overdue: Task[];
+  /**
+   * Reminders whose every delivery attempt failed since the last brief.
+   * Shown once, then the mark is cleared.
+   */
+  undelivered: Task[];
   /** The newest few todos without a date. */
   inbox: Task[];
   inboxCount: number;
@@ -66,6 +71,21 @@ export type WeeklyWrap = {
   mostSnoozed: { title: string; count: number }[];
   nextWeekCount: number;
   busiestDay: { day: Date; count: number } | null;
+};
+
+/** The live "Today" message kept pinned in the chat (settings.pinnedAgenda). */
+export type PinnedAgenda = {
+  chatId: number;
+  /** The user's zone; every time is shown in it. */
+  timezone: string;
+  now: Date;
+  /** Pending reminders due today (local day), by time. */
+  today: Task[];
+  /** One-offs completed today, so the list shows what is already behind. */
+  doneToday: Task[];
+  /** Pending reminders due before today. */
+  overdueBefore: number;
+  inboxCount: number;
 };
 
 export type Digest = MorningBrief | EveningReview | WeeklyWrap;

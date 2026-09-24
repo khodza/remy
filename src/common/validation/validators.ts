@@ -68,8 +68,6 @@ export function validateScheduledAt(
   }
 
   if (requireFuture && scheduledAt <= new Date()) {
-    throw new InvalidInputError(
-      'Scheduled time must be in the future',
-    );
+    throw new InvalidInputError('Scheduled time must be in the future');
   }
 }

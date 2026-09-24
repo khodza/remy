@@ -1,18 +1,24 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { ListTasksUsecase } from '@usecases/task/list-tasks';
+import { ListListsUsecase } from '@usecases/task/list-lists';
 import { escapeHtml } from '../html';
+import { chunkLines } from '../chunk';
 import { describeRecurrence } from '@common/recurrence';
-import { formatForUserShort } from '@common/format-date';
+import { formatForUserShort, zoneHint } from '@common/format-date';
 import type { Recurrence, Task } from '@domain/task';
+import type { User } from '@domain/user';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
 import type { ConversationRepository } from '@domain/conversation';
 import { Domain } from '@common/tokens';
 import { getEnv } from '@common/config';
 import { DigestBuilder, briefTaskIds } from '@usecases/rhythm';
+import { HIGH_PRIORITY_STEPS_MINUTES } from '@usecases/task/send-pending-reminders';
 import { ExportDataUsecase } from '@usecases/data';
 import { presentBrief } from '../presenters/rhythm.presenter';
+import { presentAssistantResult } from '../presenters/assistant.presenter';
+import { presentLists } from '../presenters/lists.presenter';
 
 function humanDelay(minutes: number): string {
   if (minutes < 60) return `${minutes} min`;
@@ -24,7 +30,11 @@ function humanDelay(minutes: number): string {
 /** Commands shown in Telegram's "/" menu. Keep in sync with /help. */
 export const BOT_COMMANDS = [
   { command: 'today', description: "Today's plan, overdue and inbox" },
-  { command: 'list', description: 'Show your pending reminders' },
+  {
+    command: 'list',
+    description: 'Pending reminders, or one list: /list shopping',
+  },
+  { command: 'lists', description: 'Your named lists (shopping, ideas…)' },
   { command: 'delete', description: 'Delete a reminder' },
   { command: 'settings', description: 'Timezone, brief times, quiet hours' },
   {
@@ -35,18 +45,44 @@ export const BOT_COMMANDS = [
   { command: 'help', description: 'How to use Remy' },
 ] as const;
 
-function repeatLine(recurrence: Recurrence | null | undefined): string {
-  const label = describeRecurrence(recurrence);
+function repeatLine(
+  recurrence: Recurrence | null | undefined,
+  timezone: string,
+): string {
+  const label = describeRecurrence(recurrence, timezone);
   return label ? `\n   🔁 ${label}` : '';
 }
 
+/** The Mini App opened on its Settings screen. */
+function settingsUrl(appUrl: string): string {
+  const url = new URL(appUrl);
+  url.searchParams.set('screen', 'settings');
+  return url.toString();
+}
+
+/** Which zone is in use and where it comes from (profile, OWNER_TIMEZONE, UTC). */
+export function timezoneLine(user: Pick<User, 'timezone'>): string {
+  if (user.timezone) return `🕐 Timezone: ${escapeHtml(user.timezone)}`;
+  const fallback = getEnv().OWNER_TIMEZONE;
+  return fallback
+    ? `🕐 Timezone: ${escapeHtml(fallback)} <i>(the server default; not set in your profile yet)</i>`
+    : '🕐 Timezone: not set <i>(using UTC until you tell me)</i>';
+}
+
+/** The text after the command itself: "/list shopping" → "shopping". */
+export function commandArgument(text: string | undefined): string {
+  return (text ?? '').replace(/^\/\w+(@\w+)?\s*/u, '').trim();
+}
+
 /** "⏰ Thu 16 Apr, 11:00", "(snoozed until …)" when delayed, "📥 no date" for todos. */
-function whenLine(
-  task: Pick<Task, 'scheduledAt' | 'snoozedUntil'>,
+export function whenLine(
+  task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'allDay' | 'timezone'>,
   timezone: string,
 ): string {
   if (task.scheduledAt === null) return '📥 no date';
-  const base = `⏰ ${formatForUserShort(task.scheduledAt, timezone)}`;
+  const base = task.allDay
+    ? `📅 ${formatForUserShort(task.scheduledAt, timezone, true)}`
+    : `⏰ ${formatForUserShort(task.scheduledAt, timezone)}${zoneHint(task.scheduledAt, task.timezone, timezone)}`;
   return task.snoozedUntil
     ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, timezone)})`
     : base;
@@ -54,6 +90,7 @@ function whenLine(
 
 @Injectable()
 export class CommandHandler {
+  private readonly logger = new Logger(CommandHandler.name);
   constructor(
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly listTasksUsecase: ListTasksUsecase,
@@ -61,7 +98,65 @@ export class CommandHandler {
     @Inject(Domain.Conversation.Repository)
     private readonly conversations: ConversationRepository,
     private readonly exportData: ExportDataUsecase,
+    private readonly listLists: ListListsUsecase,
   ) {}
+
+  /** /lists: the named lists with counts; each button opens one. */
+  public async handleLists(ctx: Context): Promise<void> {
+    if (ctx.from === undefined) return;
+    try {
+      const user = await this.ensureUserUsecase.execute(
+        toEnsureUserInput(ctx.from),
+      );
+      const reply = presentLists(
+        await this.listLists.execute({ userId: user.id }),
+      );
+      await ctx.reply(reply.html, {
+        parse_mode: 'HTML',
+        ...(reply.keyboard ? { reply_markup: reply.keyboard } : {}),
+      });
+    } catch (error) {
+      this.logger.error('Failed to handle lists command', error);
+      await ctx.reply('❌ Failed to load your lists. Please try again.');
+    }
+  }
+
+  /** One named list, as a numbered agenda replies can act on. */
+  public async showList(ctx: Context, name: string): Promise<void> {
+    if (ctx.from === undefined) return;
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
+    );
+    const timezone = resolveTimezone(user);
+    const result = await this.listTasksUsecase.execute({
+      userId: user.id,
+      list: name,
+      timezone,
+    });
+    const reply = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'all',
+        search: null,
+        list: name.trim().toLowerCase(),
+        tasks: result.tasks,
+      },
+      timezone,
+    );
+    const sent = await ctx.reply(reply.html, { parse_mode: 'HTML' });
+    if (result.tasks.length > 0) {
+      await this.conversations
+        .linkMessage({
+          chatId: ctx.chat?.id ?? ctx.from.id,
+          messageId: sent.message_id,
+          taskIds: result.tasks.map((t) => t.id),
+          kind: 'agenda',
+        })
+        .catch((error: unknown) =>
+          this.logger.error('Failed to link the list message', error),
+        );
+    }
+  }
 
   /** "/export" sends a CSV, "/export json" the full JSON record. */
   public async handleExport(ctx: Context): Promise<void> {
@@ -75,7 +170,7 @@ export class CommandHandler {
       if (result.tasks === 0)
         await ctx.reply('Nothing to export yet: you have no reminders.');
     } catch (error) {
-      console.error('Export failed:', error);
+      this.logger.error('Export failed', error);
       await ctx.reply('❌ Could not build the export. Try again in a minute.');
     }
   }
@@ -106,10 +201,10 @@ export class CommandHandler {
           kind: 'agenda',
         })
         .catch((error: unknown) =>
-          console.error('Failed to link /today:', error),
+          this.logger.error('Failed to link /today', error),
         );
     } catch (error) {
-      console.error('Failed to handle today command:', error);
+      this.logger.error('Failed to handle today command', error);
       await ctx.reply('❌ Failed to load your day. Please try again.');
     }
   }
@@ -122,9 +217,21 @@ export class CommandHandler {
         toEnsureUserInput(ctx.from),
       );
 
+      const appUrl = getEnv().MINI_APP_URL;
       const timezoneNote = user.timezone
         ? `🕐 Your timezone: ${escapeHtml(user.timezone)} (change it with /settings)`
-        : `⚠️ <b>Set your timezone first</b> so times are right: /settings, or open the Mini App and it is detected automatically.`;
+        : `⚠️ <b>Set your timezone first</b> so times are right: ${
+            appUrl
+              ? 'tap the button below and the app detects it, or send'
+              : 'send'
+          } me your city or zone (e.g. <code>Europe/Berlin</code>).`;
+      const keyboard =
+        user.timezone === null && appUrl
+          ? new InlineKeyboard().webApp(
+              '📍 Detect from app',
+              settingsUrl(appUrl),
+            )
+          : undefined;
 
       await ctx.reply(
         `👋 <b>Welcome to Remy, your reminder assistant.</b>\n\n` +
@@ -137,15 +244,18 @@ export class CommandHandler {
           `Every morning I send your plan for the day and every evening a short review; /settings to change the times.\n\n` +
           `<b>Commands</b>\n` +
           `/today – your day at a glance\n` +
-          `/list – view your reminders\n` +
+          `/list – view your reminders · /lists – your named lists\n` +
           `/delete – delete a reminder\n` +
           `/settings – timezone, brief times, quiet hours\n` +
           `/help – show help\n\n` +
           timezoneNote,
-        { parse_mode: 'HTML' },
+        {
+          parse_mode: 'HTML',
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        },
       );
     } catch (error) {
-      console.error('Failed to handle start command:', error);
+      this.logger.error('Failed to handle start command', error);
       await ctx.reply('❌ Something went wrong. Please try again.');
     }
   }
@@ -154,6 +264,13 @@ export class CommandHandler {
     if (ctx.from === undefined) return;
 
     try {
+      // "/list shopping" shows that list instead of the reminders.
+      const name = commandArgument(ctx.message?.text);
+      if (name !== '') {
+        await this.showList(ctx, name);
+        return;
+      }
+
       // Ensure user exists
       const user = await this.ensureUserUsecase.execute(
         toEnsureUserInput(ctx.from),
@@ -186,7 +303,7 @@ export class CommandHandler {
       for (const task of tasksWithButtons) {
         const emoji = task.isOverdue ? '🔴' : '🟢';
         const status = task.isOverdue ? ' (Overdue)' : '';
-        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n${whenLine(task, timezone)}${status}${repeatLine(task.recurrence).replace('\n   ', '\n')}`;
+        const text = `${emoji} <b>${escapeHtml(task.description)}</b>\n${whenLine(task, timezone)}${status}${repeatLine(task.recurrence, timezone).replace('\n   ', '\n')}`;
 
         const keyboard = new InlineKeyboard().text(
           '✅ Done',
@@ -201,17 +318,19 @@ export class CommandHandler {
       }
 
       if (tasksWithoutButtons.length > 0) {
-        let message = `<b>Later:</b>\n\n`;
-        for (const task of tasksWithoutButtons) {
+        // One entry per line so a long list is split between tasks, never
+        // inside one, and every part stays under Telegram's 4096 limit.
+        const entries = tasksWithoutButtons.map((task) => {
           const emoji = task.isOverdue ? '🔴' : '🟢';
           const status = task.isOverdue ? '(Overdue)' : '';
-          message += `${emoji} <b>${escapeHtml(task.description)}</b>\n`;
-          message += `   ${whenLine(task, timezone)} ${status}${repeatLine(task.recurrence)}\n\n`;
+          return `${emoji} <b>${escapeHtml(task.description)}</b>\n   ${whenLine(task, timezone)} ${status}${repeatLine(task.recurrence, timezone)}\n`;
+        });
+        for (const part of chunkLines([`<b>Later:</b>\n`, ...entries])) {
+          await ctx.reply(part, { parse_mode: 'HTML' });
         }
-        await ctx.reply(message, { parse_mode: 'HTML' });
       }
     } catch (error) {
-      console.error('Failed to handle list command:', error);
+      this.logger.error('Failed to handle list command', error);
       await ctx.reply('❌ Failed to fetch tasks. Please try again.');
     }
   }
@@ -250,7 +369,7 @@ export class CommandHandler {
 
       await ctx.reply('Select a task to delete:', { reply_markup: keyboard });
     } catch (error) {
-      console.error('Failed to handle delete command:', error);
+      this.logger.error('Failed to handle delete command', error);
       await ctx.reply('❌ Failed to load tasks. Please try again.');
     }
   }
@@ -264,7 +383,6 @@ export class CommandHandler {
         toEnsureUserInput(ctx.from),
       );
 
-      const currentTimezone = user.timezone ?? 'Not set (using UTC)';
       const s = user.settings;
       const weekEnd = s.weekStartsOn === 1 ? 'Sunday' : 'Saturday';
       const rhythm = [
@@ -280,39 +398,34 @@ export class CommandHandler {
           s.escalation.enabled && s.escalation.stepsMinutes.length > 0
             ? `nudge after ${s.escalation.stepsMinutes.map(humanDelay).join(' and ')}`
             : 'no nudges'
+        }${
+          s.escalation.enabled
+            ? ` · high priority after ${HIGH_PRIORITY_STEPS_MINUTES.map(humanDelay).join(', ')}, low never`
+            : ''
         }`,
       ].join('\n');
 
-      // Create inline keyboard with common timezones
-      const keyboard = new InlineKeyboard()
-        .text('🌍 UTC', 'tz:UTC')
-        .text('🇺🇸 America/New_York', 'tz:America/New_York')
-        .row()
-        .text('🇺🇸 America/Los_Angeles', 'tz:America/Los_Angeles')
-        .text('🇬🇧 Europe/London', 'tz:Europe/London')
-        .row()
-        .text('🇩🇪 Europe/Berlin', 'tz:Europe/Berlin')
-        .text('🇯🇵 Asia/Tokyo', 'tz:Asia/Tokyo')
-        .row()
-        .text('🇺🇿 Asia/Tashkent', 'tz:Asia/Tashkent')
-        .text('🇦🇺 Australia/Sydney', 'tz:Australia/Sydney');
-
       const appUrl = getEnv().MINI_APP_URL;
-      if (appUrl) {
-        const url = new URL(appUrl);
-        url.searchParams.set('screen', 'settings');
-        keyboard.row().webApp('⚙️ Change these in the app', url.toString());
-      }
+      const keyboard = appUrl
+        ? new InlineKeyboard()
+            .webApp('🌍 Region and timezone', settingsUrl(appUrl))
+            .row()
+            .webApp('⚙️ Change these in the app', settingsUrl(appUrl))
+        : undefined;
 
       await ctx.reply(
-        `⚙️ <b>Settings</b>\n\n🕐 Timezone: ${escapeHtml(currentTimezone)}\n${rhythm}\n\n` +
+        `⚙️ <b>Settings</b>\n\n${timezoneLine(user)}\n${rhythm}\n\n` +
+          `To change the timezone, ${appUrl ? 'open Region in the app or ' : ''}send me your city or zone (e.g. <code>Europe/Berlin</code>, “I'm in Tashkent now”).` +
           (appUrl
-            ? 'Change them in the app, or pick a timezone below.'
-            : 'Pick a timezone below. Brief times, quiet hours and nudges are changed in the Mini App (Settings).'),
-        { reply_markup: keyboard, parse_mode: 'HTML' },
+            ? ''
+            : ' Brief times, quiet hours and nudges are changed in the Mini App (Settings).'),
+        {
+          parse_mode: 'HTML',
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        },
       );
     } catch (error) {
-      console.error('Failed to handle settings command:', error);
+      this.logger.error('Failed to handle settings command', error);
       await ctx.reply('❌ Failed to load settings. Please try again.');
     }
   }
@@ -326,6 +439,8 @@ export class CommandHandler {
         `• "Buy milk, pay rent on the 1st, dentist Friday 10" (several at once)\n` +
         `• "Flight Saturday 18:00, remind me 3 hours before"\n` +
         `• "Someday: learn to make plov" (no date → Inbox)\n` +
+        `• "Add milk to the shopping list", "What's on my shopping list?", "Clear the shopping list"\n` +
+        `• "Pay rent on Friday" (a date with no time), "Vitamins every day for 5 days"\n` +
         `• Forward me any message and tell me when\n\n` +
         `<b>Repeating</b>\n` +
         `• "Vitamins every day at 9", "Standup every weekday 9:30"\n` +
@@ -339,13 +454,13 @@ export class CommandHandler {
         `<b>When it's time</b>\n` +
         `Buttons show the resulting time: ✅ Done, +15m, +1h, Tonight, Tomorrow. ` +
         `Every change has an ↩ Undo for 10 minutes. ` +
-        `If you ignore a reminder I nudge you again (after 30 min and 2 h by default), never during your quiet hours.\n\n` +
+        `If you ignore a reminder I nudge you again (after 30 min and 2 h by default; a high-priority one after 10, 30 and 60 min, and it rings through quiet hours), never a low-priority one.\n\n` +
         `<b>Every day</b>\n` +
         `☀️ Morning brief: today's plan, overdue things, your Inbox.\n` +
         `🌙 Evening review: what is still open, with one-tap Done / Tomorrow / No date.\n` +
         `📊 On the last evening of the week: a short wrap-up.\n\n` +
         `<b>Commands</b>\n` +
-        `/today – your day at a glance · /list – pending reminders\n` +
+        `/today – your day at a glance · /list – pending reminders · /lists – named lists\n` +
         `/delete – delete one · /settings – times, quiet hours, nudges\n` +
         `/export – everything as a CSV file (/export json for the full record)\n` +
         `/help – this message`,

@@ -26,6 +26,7 @@ const base: MorningBrief = {
   timezone: tz,
   now: new Date('2026-09-24T03:00:00Z'),
   firstName: 'Izzat',
+  undelivered: [],
   today: [
     makeTask({
       description: 'Dentist',

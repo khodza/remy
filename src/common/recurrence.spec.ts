@@ -2,6 +2,7 @@ import {
   computeLatestOccurrence,
   computeNextOccurrence,
   describeRecurrence,
+  rolloverTimeOf,
   seriesEnd,
 } from './recurrence';
 
@@ -62,6 +63,16 @@ describe('computeNextOccurrence', () => {
     expect(computeNextOccurrence(base, { type: 'daily' }, now)).toEqual(
       new Date('2026-09-27T09:00:00Z'),
     );
+  });
+
+  it('a series more than 1000 cycles behind is ended, never a date in the past (B10)', () => {
+    const now = new Date('2030-01-01T00:00:00Z'); // ~1200 days after base
+    expect(computeNextOccurrence(base, { type: 'daily' }, now)).toBeNull();
+    // Within the cap it still catches up normally.
+    const soon = new Date('2028-01-01T00:00:00Z');
+    expect(
+      computeNextOccurrence(base, { type: 'daily' }, soon)!.getTime(),
+    ).toBeGreaterThan(soon.getTime());
   });
 
   it('monthly: keeps the anchor day after a short month (B4)', () => {
@@ -251,6 +262,37 @@ describe('computeLatestOccurrence', () => {
   });
 });
 
+describe('rolloverTimeOf', () => {
+  const at = new Date('2026-09-16T09:00:00Z');
+
+  it('is the next cycle after the current occurrence, in the task zone', () => {
+    expect(rolloverTimeOf(at, { type: 'daily' })).toEqual(
+      new Date('2026-09-17T09:00:00Z'),
+    );
+    expect(rolloverTimeOf(at, { type: 'weekly', byWeekday: [1] })).toEqual(
+      new Date('2026-09-21T09:00:00Z'), // Monday
+    );
+  });
+
+  it('is null on the last occurrence of a series', () => {
+    expect(
+      rolloverTimeOf(at, { type: 'daily', count: 1, anchorAt: at }),
+    ).toBeNull();
+    expect(
+      rolloverTimeOf(at, {
+        type: 'daily',
+        until: new Date('2026-09-16T23:59:59Z'),
+      }),
+    ).toBeNull();
+    expect(
+      rolloverTimeOf(at, {
+        type: 'daily',
+        until: new Date('2026-09-17T23:59:59Z'),
+      }),
+    ).toEqual(new Date('2026-09-17T09:00:00Z'));
+  });
+});
+
 describe('count ("× N times")', () => {
   const at = (iso: string) => new Date(iso);
 
@@ -324,10 +366,10 @@ describe('count ("× N times")', () => {
 
   it('is described', () => {
     expect(describeRecurrence({ type: 'daily', count: 10 })).toBe(
-      'every day, 10 times',
+      'every day × 10 times',
     );
     expect(describeRecurrence({ type: 'weekly', count: 1 })).toBe(
-      'every week, once',
+      'every week × 1 time',
     );
   });
 });

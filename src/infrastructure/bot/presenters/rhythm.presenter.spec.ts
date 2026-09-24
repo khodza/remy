@@ -1,10 +1,12 @@
 import {
   briefKeyboard,
+  PINNED_AGENDA_MAX_LINES,
   presentBrief,
+  presentPinnedAgenda,
   presentReview,
   presentWrap,
 } from './rhythm.presenter';
-import type { MorningBrief, ReviewState } from '@domain/rhythm';
+import type { MorningBrief, PinnedAgenda, ReviewState } from '@domain/rhythm';
 import { makeTask } from '@test/factories';
 
 const tz = 'Asia/Tashkent';
@@ -12,6 +14,85 @@ const buttons = (reply: {
   keyboard?: { inline_keyboard: { text: string }[][] };
 }) =>
   (reply.keyboard?.inline_keyboard ?? []).map((row) => row.map((b) => b.text));
+
+describe('presentPinnedAgenda', () => {
+  const agenda: PinnedAgenda = {
+    chatId: 42,
+    timezone: tz,
+    now: new Date('2026-09-17T05:00:00Z'), // Thu 10:00 local
+    today: [
+      makeTask({
+        description: 'Standup <dev>',
+        scheduledAt: new Date('2026-09-17T04:30:00Z'), // 09:30, overdue
+        recurrence: { type: 'weekdays' },
+        timezone: tz,
+      }),
+      makeTask({
+        description: 'Dentist',
+        scheduledAt: new Date('2026-09-17T10:00:00Z'), // 15:00
+        priority: 'high',
+        timezone: tz,
+      }),
+      makeTask({
+        description: 'Pay rent',
+        scheduledAt: new Date('2026-09-17T04:00:00Z'),
+        allDay: true,
+        timezone: tz,
+      }),
+    ],
+    doneToday: [
+      makeTask({
+        description: 'Gym',
+        scheduledAt: new Date('2026-09-17T02:00:00Z'), // 07:00
+        status: 'completed' as never,
+        timezone: tz,
+      }),
+    ],
+    overdueBefore: 2,
+    inboxCount: 3,
+  };
+
+  it('header with the day and the update clock, done struck through, overdue red, footer counts', () => {
+    const html = presentPinnedAgenda(agenda);
+    expect(html.split('\n')).toEqual([
+      '📌 <b>Today</b> · Thu 17 Sep · <i>updated 10:00</i>',
+      '',
+      '✅ <s>07:00 Gym</s>',
+      '<b>all day</b> Pay rent',
+      '🔴 <b>09:30</b> Standup &lt;dev&gt; 🔁',
+      '<b>15:00</b> Dentist ❗',
+      '',
+      '🔴 2 overdue from before today · 📥 3 in the Inbox',
+    ]);
+  });
+
+  it('an empty day says so; no footer when there is nothing to count', () => {
+    const html = presentPinnedAgenda({
+      ...agenda,
+      today: [],
+      doneToday: [],
+      overdueBefore: 0,
+      inboxCount: 0,
+    });
+    expect(html).toBe(
+      '📌 <b>Today</b> · Thu 17 Sep · <i>updated 10:00</i>\n\nNothing scheduled for today.',
+    );
+  });
+
+  it('caps a long day', () => {
+    const today = Array.from({ length: PINNED_AGENDA_MAX_LINES + 3 }, (_, i) =>
+      makeTask({
+        id: `t${i}`,
+        description: `Task ${i}`,
+        scheduledAt: new Date(Date.UTC(2026, 8, 17, 6, i)),
+        timezone: tz,
+      }),
+    );
+    const html = presentPinnedAgenda({ ...agenda, today, doneToday: [] });
+    expect(html).toContain('…and 3 more');
+    expect(html).not.toContain('Task 21');
+  });
+});
 
 describe('presentBrief', () => {
   const brief: MorningBrief = {
@@ -40,6 +121,7 @@ describe('presentBrief', () => {
     ],
     inbox: [makeTask({ description: 'Buy headphones', scheduledAt: null })],
     inboxCount: 4,
+    undelivered: [],
     scheduled: true,
   };
 
@@ -57,6 +139,21 @@ describe('presentBrief', () => {
       '📥 <b>Inbox</b> · 4 without a date: Buy headphones, …',
     );
     expect(buttons(reply)).toEqual([['⏭ Move overdue to today']]);
+  });
+
+  it('names reminders that could not be delivered, with their time', () => {
+    const reply = presentBrief({
+      ...brief,
+      undelivered: [
+        makeTask({
+          description: 'Call the bank <now>',
+          scheduledAt: new Date('2026-09-16T13:00:00Z'), // Wed 18:00 local
+        }),
+      ],
+    });
+    expect(reply.html).toContain(
+      '⚠️ <b>Could not be delivered</b> · 1: Call the bank &lt;now&gt; (Wed 18:00)',
+    );
   });
 
   it('an empty day says so, without the move button or the reply hint', () => {
@@ -140,6 +237,35 @@ describe('presentReview', () => {
     expect(done.html).toContain('1. ✅ <s>Pay bill</s>');
     expect(done.html).toContain('All sorted. Good night!');
     expect(done.keyboard).toBeUndefined();
+  });
+
+  it('the last tap gets an Undo row, even once everything is sorted', () => {
+    const partly = presentReview(
+      {
+        ...review,
+        items: [{ ...review.items[0]!, outcome: 'done' }, review.items[1]!],
+      },
+      now,
+      { id: 'u1', label: 'Done' },
+    );
+    expect(buttons(partly)).toEqual([
+      ['2 ✅', '2 ⏭ Tmrw 09:00', '2 ⏩ Skip'],
+      ['↩ Undo: Done'],
+    ]);
+    expect(partly.keyboard!.inline_keyboard.at(-1)![0]).toMatchObject({
+      callback_data: 'rvundo:u1',
+    });
+
+    const sorted = presentReview(
+      {
+        ...review,
+        items: review.items.map((i) => ({ ...i, outcome: 'done' as const })),
+      },
+      now,
+      { id: 'u2', label: 'Done' },
+    );
+    expect(sorted.html).toContain('All sorted');
+    expect(buttons(sorted)).toEqual([['↩ Undo: Done']]);
   });
 
   it('nothing open at all', () => {

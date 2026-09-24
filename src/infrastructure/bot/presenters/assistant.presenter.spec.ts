@@ -82,6 +82,52 @@ describe('presentAssistantResult', () => {
     expect(reply.html).toContain('✅ Dentist');
   });
 
+  it('an all-day task is shown as a date only, with a repeat count', () => {
+    const allDay = makeTask({
+      description: 'Pay rent',
+      scheduledAt: new Date('2026-09-25T04:00:00Z'), // Fri 09:00 Tashkent
+      timezone: tz,
+      allDay: true,
+      recurrence: { type: 'monthly', count: 3 },
+    });
+    const one = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [allDay] },
+      tz,
+      now,
+    );
+    expect(one.html).toContain('📅 Fri 25 Sep 2026 (all day)');
+    expect(one.html).toContain('Repeats every month × 3 times');
+    expect(one.html).not.toContain('09:00');
+
+    const many = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [allDay, allDay] },
+      tz,
+      now,
+    );
+    expect(many.html).toContain('<b>Pay rent</b> · Fri 25 Sep (all day)');
+
+    // In the agenda, "all day" takes the clock's place and it is not late
+    // during its own day.
+    const agenda = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'week',
+        search: null,
+        list: null,
+        tasks: [
+          makeTask({
+            ...allDay,
+            scheduledAt: new Date('2026-09-18T04:00:00Z'), // today
+          }),
+        ],
+      },
+      tz,
+      now,
+    );
+    expect(agenda.html).toContain('1. <b>all day</b> Pay rent 🔁');
+    expect(agenda.html).not.toContain('late');
+  });
+
   it('every time is shown in the profile zone, whatever zone the task was made in', () => {
     const berlinTask = makeTask({
       description: 'Standup',
@@ -100,7 +146,29 @@ describe('presentAssistantResult', () => {
       tz,
       now,
     );
-    expect(moved.html).toContain('Mon 21 Sep, 12:00');
+    // …with the task's own clock as a hint, so "the 9 o'clock standup"
+    // is still recognisable after a move; not for the same zone or offset.
+    expect(moved.html).toContain(
+      '<b>Mon 21 Sep, 12:00</b> <i>(09:00 Berlin time)</i>',
+    );
+    const created = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [berlinTask] },
+      tz,
+      now,
+    );
+    expect(created.html).toContain(
+      '⏰ Mon 21 Sep 2026, 12:00 <i>(09:00 Berlin time)</i>',
+    );
+    const sameClock = presentAssistantResult(
+      {
+        kind: 'created',
+        undoId: 'u',
+        tasks: [makeTask({ ...berlinTask, timezone: 'Europe/Paris' })],
+      },
+      'Europe/Berlin',
+      now,
+    );
+    expect(sameClock.html).not.toContain('time)</i>');
 
     // Across the DST switch the profile zone's offset changes, the task
     // zone's does not: 09:00 Tashkent is 06:00 Berlin in summer and 05:00
@@ -165,6 +233,7 @@ describe('presentAssistantResult', () => {
         kind: 'agenda',
         range: 'week',
         search: null,
+        list: null,
         tasks: [
           makeTask({
             description: 'Pay bill',
@@ -196,11 +265,66 @@ describe('presentAssistantResult', () => {
 
     expect(
       presentAssistantResult(
-        { kind: 'agenda', range: 'today', search: null, tasks: [] },
+        { kind: 'agenda', range: 'today', search: null, list: null, tasks: [] },
         tz,
         now,
       ).html,
     ).toContain('Nothing here');
+  });
+
+  it('lists: the confirmation names the list, and a list agenda is titled by it', () => {
+    const milk = makeTask({
+      description: 'Milk',
+      scheduledAt: null,
+      list: 'shopping',
+    });
+    const created = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [milk] },
+      tz,
+      now,
+    );
+    expect(created.html).toContain('🗂 On your shopping list');
+    const agenda = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'all',
+        search: null,
+        list: 'shopping',
+        tasks: [milk],
+      },
+      tz,
+      now,
+    );
+    expect(agenda.html).toContain('📋 <b>🗂 Shopping list</b> · 1');
+    const empty = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'today',
+        search: null,
+        list: 'shopping',
+        tasks: [],
+      },
+      tz,
+      now,
+    );
+    expect(empty.html).toContain('🗂 Shopping list · Today');
+  });
+
+  it('timezone_changed: names the zone, the old one, the local time there, with Undo', () => {
+    const reply = presentAssistantResult(
+      {
+        kind: 'timezone_changed',
+        timezone: 'Europe/Berlin',
+        previous: 'Asia/Tashkent',
+        undoId: 'u9',
+      },
+      tz,
+      now, // 09:47Z = 11:47 Berlin
+    );
+    expect(reply.html).toContain('Timezone set to Europe/Berlin');
+    expect(reply.html).toContain('(was Asia/Tashkent)');
+    expect(reply.html).toContain('It is 11:47 there now');
+    expect(buttons(reply)).toEqual([['↩ Undo', 'undo:u9']]);
   });
 
   it('question: options become tappable answers; chat text is escaped', () => {

@@ -11,6 +11,53 @@ const user = makeUser({
 });
 
 describe('DigestBuilder', () => {
+  it('pinned agenda: today (pending + done today), overdue-before count, inbox count', async () => {
+    const tasks = mockTaskRepository();
+    const now = new Date('2026-09-17T05:00:00Z'); // Thu 10:00 local
+    const doneToday = makeTask({
+      id: 'done-today',
+      status: TaskStatus.Completed,
+      scheduledAt: new Date('2026-09-17T03:00:00Z'),
+      completedAt: new Date('2026-09-17T03:05:00Z'),
+    });
+    const doneOld = makeTask({
+      id: 'done-old',
+      status: TaskStatus.Completed,
+      scheduledAt: new Date('2026-09-10T03:00:00Z'), // due last week
+      completedAt: new Date('2026-09-17T03:05:00Z'),
+    });
+    tasks.find.mockImplementation(async (filter) => {
+      if (filter.statuses[0] === TaskStatus.Completed)
+        return [doneToday, doneOld];
+      if (filter.kind === 'todo') return [makeTask({ scheduledAt: null })];
+      if (filter.dueAfter) return [makeTask({ id: 'today' })];
+      return [makeTask({ id: 'old-1' }), makeTask({ id: 'old-2' })];
+    });
+
+    const agenda = await new DigestBuilder(tasks).buildPinnedAgenda(
+      user,
+      tz,
+      now,
+    );
+
+    expect(tasks.find).toHaveBeenCalledWith({
+      userId: 'user-1',
+      statuses: [TaskStatus.Completed],
+      kind: 'reminder',
+      completedAtOrAfter: new Date('2026-09-16T19:00:00Z'),
+      sort: 'dueAt',
+    });
+    expect(agenda).toMatchObject({
+      chatId: 42,
+      timezone: tz,
+      now,
+      overdueBefore: 2,
+      inboxCount: 1,
+    });
+    expect(agenda.today.map((t) => t.id)).toEqual(['today']);
+    expect(agenda.doneToday.map((t) => t.id)).toEqual(['done-today']);
+  });
+
   it('brief: today / overdue / inbox by the user day (due time, not fire time)', async () => {
     const tasks = mockTaskRepository();
     tasks.find.mockResolvedValue([]);

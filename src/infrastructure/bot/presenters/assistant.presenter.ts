@@ -5,7 +5,13 @@ import type { Task } from '@domain/task';
 import type { AssistantResult } from '@usecases/assistant';
 import { describeRecurrence } from '@common/recurrence';
 import { effectiveDueAt } from '@common/fire-time';
-import { formatForUser, formatForUserShort } from '@common/format-date';
+import { isTaskOverdue } from '@common/all-day';
+import {
+  formatClockForUser,
+  formatForUser,
+  formatForUserShort,
+  zoneHint,
+} from '@common/format-date';
 import { escapeHtml } from '../html';
 
 export type BotReply = { html: string; keyboard?: InlineKeyboard };
@@ -30,6 +36,16 @@ export function presentAssistantResult(
   switch (result.kind) {
     case 'chat':
       return { html: escapeHtml(result.reply) };
+
+    case 'timezone_changed': {
+      const was = result.previous
+        ? ` <i>(was ${escapeHtml(result.previous)})</i>`
+        : '';
+      return {
+        html: `🕐 <b>Timezone set to ${escapeHtml(result.timezone)}</b>${was}\nIt is ${formatInTimeZone(now, result.timezone, 'HH:mm')} there now; every time I show you is in this zone from here on.`,
+        keyboard: undoKeyboard(result.undoId),
+      };
+    }
 
     case 'question': {
       const keyboard = new InlineKeyboard();
@@ -94,7 +110,10 @@ export function presentAssistantResult(
         const due = effectiveDueAt(t);
         const occurrenceOnly =
           t.recurrence && t.snoozedUntil ? ' <i>(this time only)</i>' : '';
-        return `⏭ ${escapeHtml(t.description)} → <b>${due ? formatForUserShort(due, timezone) : '—'}</b>${occurrenceOnly}`;
+        const when = due
+          ? `<b>${formatForUserShort(due, timezone, t.allDay)}</b>${zoneHint(due, t.timezone, timezone, t.allDay)}`
+          : '<b>—</b>';
+        return `⏭ ${escapeHtml(t.description)} → ${when}${occurrenceOnly}`;
       });
       for (const t of result.skipped) {
         lines.push(
@@ -108,9 +127,12 @@ export function presentAssistantResult(
     }
 
     case 'agenda': {
+      const scope = result.list ? `${listTitle(result.list)} · ` : '';
       const title = result.search
-        ? `Matching “${escapeHtml(result.search)}”`
-        : RANGE_TITLES[result.range];
+        ? `${scope}Matching “${escapeHtml(result.search)}”`
+        : result.list && result.range === 'all'
+          ? listTitle(result.list)
+          : `${scope}${RANGE_TITLES[result.range]}`;
       if (result.tasks.length === 0) {
         return { html: `📭 <b>${title}</b>\n\nNothing here.` };
       }
@@ -137,7 +159,9 @@ function taskBlock(task: Task, timezone: string): string {
   const due = effectiveDueAt(task);
   lines.push(
     due
-      ? `⏰ ${formatForUser(due, timezone)}`
+      ? task.allDay
+        ? `📅 ${formatForUser(due, timezone, true)}`
+        : `⏰ ${formatForUser(due, timezone)}${zoneHint(due, task.timezone, timezone)}`
       : '📥 No date: saved to your Inbox',
   );
   const repeat = describeRecurrence(task.recurrence, timezone);
@@ -145,16 +169,23 @@ function taskBlock(task: Task, timezone: string): string {
   if (task.leadMinutes && due)
     lines.push(`⏳ Heads-up ${task.leadMinutes} min before`);
   if (task.priority === 'high') lines.push('❗ High priority');
+  if (task.list) lines.push(`🗂 On your ${escapeHtml(task.list)} list`);
   return lines.join('\n');
+}
+
+/** "Shopping list" for the list "shopping". */
+export function listTitle(list: string): string {
+  return `🗂 ${escapeHtml(list.charAt(0).toUpperCase() + list.slice(1))} list`;
 }
 
 /** One-line description used in lists. */
 function taskLine(task: Task, timezone: string, now: Date): string {
   const due = effectiveDueAt(task);
-  const when = due ? formatForUserShort(due, timezone) : 'no date';
+  const when = due ? formatForUserShort(due, timezone, task.allDay) : 'no date';
   const repeat = describeRecurrence(task.recurrence, timezone);
-  const late = due && due < now && task.status === 'pending' ? ' 🔴' : '';
-  return `<b>${escapeHtml(task.description)}</b> · ${when}${repeat ? ` · 🔁 ${repeat}` : ''}${late}`;
+  const late = isTaskOverdue(task, now) ? ' 🔴' : '';
+  const list = task.list ? ` · 🗂 ${escapeHtml(task.list)}` : '';
+  return `<b>${escapeHtml(task.description)}</b> · ${when}${repeat ? ` · 🔁 ${repeat}` : ''}${list}${late}`;
 }
 
 /** Numbered lines with a day header whenever the day changes. */
@@ -169,9 +200,9 @@ function agendaLines(tasks: Task[], timezone: string, now: Date): string[] {
       lines.push(`<u>${day}</u>`);
       lastDay = day;
     }
-    const time = due ? formatInTimeZone(due, timezone, 'HH:mm') : '📥';
+    const time = due ? formatClockForUser(due, timezone, task.allDay) : '📥';
     const overdue =
-      due && due < now
+      due && isTaskOverdue(task, now)
         ? ` 🔴 ${lateBy(differenceInMinutes(now, due))} late`
         : '';
     const repeat = task.recurrence ? ' 🔁' : '';

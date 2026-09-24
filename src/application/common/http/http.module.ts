@@ -25,6 +25,8 @@ import { ClientErrorController } from './controllers/client-error.controller';
 import { GoogleCalendarController } from './controllers/google-calendar.controller';
 import { DataModule } from '../data/data.module';
 import { NotificationModule } from '../notification/notification.module';
+import { RhythmModule } from '../rhythm/rhythm.module';
+import { PinnedAgendaInterceptor } from './interceptors/pinned-agenda.interceptor';
 import { getEnv } from '@common/config';
 import { GetSettingsUsecase, UpdateSettingsUsecase } from '@usecases/settings';
 import {
@@ -54,6 +56,7 @@ import {
     OpenAIModule,
     DataModule,
     NotificationModule, // TelegramBotService for the health check
+    RhythmModule,
   ],
   controllers: [
     AuthController,
@@ -81,6 +84,7 @@ import {
     DeleteCategoryUsecase,
     InitDataGuard,
     JwtAuthGuard,
+    PinnedAgendaInterceptor,
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],

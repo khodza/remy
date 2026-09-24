@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { Context } from 'grammy';
 import type { User } from '@domain/user';
 import { InterpretationFailedError } from '@domain/assistant';
@@ -7,6 +7,7 @@ import {
   taskIdsOf,
   type HandleMessageInput,
 } from '@usecases/assistant';
+import { RefreshPinnedAgendaUsecase } from '@usecases/rhythm';
 import { presentAssistantResult } from './presenters/assistant.presenter';
 import { escapeHtml } from './html';
 import { resolveTimezone } from './user-input';
@@ -26,7 +27,11 @@ export type RespondOptions = Pick<
  */
 @Injectable()
 export class AssistantResponder {
-  constructor(private readonly handleMessage: HandleMessageUsecase) {}
+  private readonly logger = new Logger(AssistantResponder.name);
+  constructor(
+    private readonly handleMessage: HandleMessageUsecase,
+    private readonly pinnedAgenda: RefreshPinnedAgendaUsecase,
+  ) {}
 
   public async respond(
     ctx: Context,
@@ -55,13 +60,18 @@ export class AssistantResponder {
           : {}),
       });
     } catch (error) {
-      console.error('Assistant failed:', error);
+      this.logger.error('Assistant failed', error);
       await ctx.reply(
         error instanceof InterpretationFailedError
           ? '🧠 I could not think just now (the AI service did not answer). Nothing was changed; please send that again in a moment.'
           : '❌ Something went wrong and nothing was changed. Please try again.',
       );
       return;
+    }
+
+    // Anything but talk may have changed today's picture.
+    if (result.kind !== 'chat' && result.kind !== 'question') {
+      this.pinnedAgenda.refreshSoon({ userId: user.id });
     }
 
     const reply = presentAssistantResult(result, timezone);
@@ -86,7 +96,7 @@ export class AssistantResponder {
           result.kind === 'agenda' ? 'agenda' : 'confirmation',
         )
         .catch((error: unknown) =>
-          console.error('Failed to link reply:', error),
+          this.logger.error('Failed to link reply', error),
         );
     }
   }

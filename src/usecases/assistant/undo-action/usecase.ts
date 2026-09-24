@@ -1,10 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { ConversationRepository } from '@domain/conversation';
 import { type TaskRepository, TaskStatus } from '@domain/task/repository';
+import type { UserRepository } from '@domain/user';
 import { Domain } from '@common/tokens';
 
 export type UndoActionOutput =
-  | { undone: true; label: string }
+  | {
+      undone: true;
+      label: string;
+      /** Every task the undo touched (restored or removed). */
+      taskIds: string[];
+    }
   | { undone: false; reason: 'expired_or_used' };
 
 /** Applies an Undo button: exactly once, only within its window. */
@@ -15,6 +21,8 @@ export class UndoActionUsecase {
     private readonly conversations: ConversationRepository,
     @Inject(Domain.Task.Repository)
     private readonly tasks: TaskRepository,
+    @Inject(Domain.User.Repository)
+    private readonly users: UserRepository,
   ) {}
 
   public async execute(input: {
@@ -53,6 +61,19 @@ export class UndoActionUsecase {
         ...(s.snoozeCount !== undefined ? { snoozeCount: s.snoozeCount } : {}),
       });
     }
-    return { undone: true, label: record.label };
+    if (record.restoreTimezone !== undefined) {
+      await this.users.update({
+        id: record.userId,
+        timezone: record.restoreTimezone,
+      });
+    }
+    return {
+      undone: true,
+      label: record.label,
+      taskIds: [
+        ...record.createdTaskIds,
+        ...record.snapshots.map((s) => s.taskId),
+      ],
+    };
   }
 }

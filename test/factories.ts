@@ -34,6 +34,8 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     nextFireAt:
       scheduledAt === null ? null : (overrides.snoozedUntil ?? scheduledAt),
     nextAttemptAt: null,
+    reminderAttempts: 0,
+    deliveryFailedAt: null,
     leadMinutes: null,
     leadSentFor: null,
     nudgeAt: null,
@@ -69,6 +71,7 @@ export function mockTaskRepository(): jest.Mocked<TaskRepository> {
     deleteAllForUser: jest.fn().mockResolvedValue(0),
     claimDueReminder: jest.fn().mockResolvedValue(null),
     releaseReminderClaim: jest.fn().mockResolvedValue(undefined),
+    markDeliveryFailed: jest.fn().mockResolvedValue(undefined),
     findOverdueRecurring: jest.fn().mockResolvedValue([]),
     update: jest.fn(),
     delete: jest.fn(),
@@ -87,6 +90,7 @@ export function makeUser(overrides: Partial<User> = {}): User {
     settings: structuredClone(DEFAULT_USER_SETTINGS),
     categories: null,
     calendarToken: null,
+    pinnedAgenda: null,
     createdAt,
     updatedAt: createdAt,
     ...overrides,
@@ -139,6 +143,9 @@ export function mockUserRepository(
         ...(params.calendarToken !== undefined
           ? { calendarToken: params.calendarToken }
           : {}),
+        ...(params.pinnedAgenda !== undefined
+          ? { pinnedAgenda: params.pinnedAgenda }
+          : {}),
       };
       return user;
     }),
@@ -189,6 +196,19 @@ export function mockConversationRepository(): jest.Mocked<ConversationRepository
         if (!r || !item) return null;
         item.outcome = outcome;
         item.newDueAt = newDueAt;
+        return structuredClone(r);
+      },
+    ),
+    reopenReviewItems: jest.fn(
+      async (chatId: number, messageId: number, taskIds: string[]) => {
+        const r = reviews.get(`${chatId}:${messageId}`);
+        if (!r) return null;
+        for (const item of r.items) {
+          if (taskIds.includes(item.taskId)) {
+            item.outcome = null;
+            item.newDueAt = null;
+          }
+        }
         return structuredClone(r);
       },
     ),

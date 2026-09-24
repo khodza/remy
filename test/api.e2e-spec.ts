@@ -13,9 +13,13 @@ import { GrammyError } from 'grammy';
 import { AppModule } from '../src/app.module';
 import { TelegramBotService } from '@infra/bot/bot.service';
 import { SendPendingRemindersUsecase } from '@usecases/task/send-pending-reminders';
-import { SendDailyDigestsUsecase } from '@usecases/rhythm';
+import {
+  RefreshPinnedAgendaUsecase,
+  SendDailyDigestsUsecase,
+} from '@usecases/rhythm';
 import { Domain } from '@common/tokens';
 import type { TaskRepository } from '@domain/task';
+import type { UserRepository } from '@domain/user';
 import { formatInTimeZone } from 'date-fns-tz';
 import {
   CalendarFeed,
@@ -49,6 +53,23 @@ describe('Remy API (e2e)', () => {
       message_id: ++messageSeq,
     }),
   );
+  const sendVoice = jest.fn(async (_chatId: number, _file: unknown) => ({
+    message_id: ++messageSeq,
+  }));
+  // The pinned agenda edits, pins and unpins.
+  const editMessageText = jest.fn(async () => true);
+  const pinChatMessage = jest.fn(async () => true);
+  const unpinChatMessage = jest.fn(async () => true);
+  const deleteMessage = jest.fn(async () => true);
+  // Background work (the pinned agenda refresh) has no response to await.
+  const waitFor = async (
+    check: () => boolean | Promise<boolean>,
+  ): Promise<void> => {
+    for (let i = 0; i < 100 && !(await check()); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(await check()).toBe(true);
+  };
   // The assistant without OpenAI, one line at a time: "dentist" gets a
   // time tomorrow, anything else becomes a todo.
   const interpret = jest.fn(async (input: InterpreterInput) => {
@@ -110,11 +131,30 @@ describe('Remy API (e2e)', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(TelegramBotService)
       .useValue({
-        getBot: () => ({ api: { sendMessage, sendDocument, getMe } }),
+        getBot: () => ({
+          api: {
+            sendMessage,
+            sendDocument,
+            getMe,
+            sendVoice,
+            editMessageText,
+            pinChatMessage,
+            unpinChatMessage,
+            deleteMessage,
+          },
+        }),
       })
       .overrideProvider(Domain.Assistant.InterpreterGateway)
       .useValue({ interpret })
       // The "recording" is its own transcript.
+      // The spoken brief: the "audio" is the text it was asked to read.
+      .overrideProvider(Domain.AI.SpeechGateway)
+      .useValue({
+        synthesize: async (input: { text: string }) => ({
+          audio: Buffer.from(input.text, 'utf8'),
+          mimeType: 'audio/ogg',
+        }),
+      })
       .overrideProvider(Domain.AI.TranscriptionGateway)
       .useValue({
         transcribe: async (input: { audioFileBuffer: Buffer }) => ({
@@ -212,11 +252,11 @@ describe('Remy API (e2e)', () => {
     });
 
     const toggled = await authed(api().patch('/api/v1/settings'))
-      .send({ voiceBrief: true, pinnedAgenda: true })
+      .send({ voiceBrief: true })
       .expect(200);
     expect(Settings.parse(toggled.body)).toMatchObject({
       voiceBrief: true,
-      pinnedAgenda: true,
+      pinnedAgenda: false, // has its own test below
       defaultView: 'list',
     });
     await authed(api().patch('/api/v1/settings'))
@@ -674,8 +714,90 @@ describe('Remy API (e2e)', () => {
       String(c[1]).includes('Good morning'),
     );
     expect(brief?.[1]).toContain('Water the plants');
+    // voiceBrief was switched on in the settings test: the brief is also
+    // read aloud, after the text.
+    expect(sendVoice).toHaveBeenCalledTimes(1);
+    const voice = sendVoice.mock.calls[0]![1] as { fileData: Buffer };
+    expect(voice.fileData.toString('utf8')).toMatch(
+      /^Good morning, .*Water the plants/,
+    );
     expect((await digests.execute()).sent).toBe(0); // once per local day
   });
+  it('pinned agenda: drawn and pinned when turned on, redrawn on the tick after a change, taken down when turned off', async () => {
+    sendMessage.mockClear();
+    pinChatMessage.mockClear();
+    unpinChatMessage.mockClear();
+    deleteMessage.mockClear();
+    await authed(api().patch('/api/v1/settings'))
+      .send({ pinnedAgenda: true })
+      .expect(200);
+    // Turning it on draws it in the background.
+    await waitFor(() => pinChatMessage.mock.calls.length === 1);
+    const first = sendMessage.mock.calls.find((c) =>
+      String(c[1]).startsWith('📌 <b>Today</b>'),
+    );
+    expect(first?.[0]).toBe(MOCK_TG_ID);
+    expect(first?.[2]).toMatchObject({
+      parse_mode: 'HTML',
+      disable_notification: true,
+    });
+    const users = app.get<UserRepository>(Domain.User.Repository);
+    await waitFor(
+      async () =>
+        (await users.findByTelegramUserId(MOCK_TG_ID))?.pinnedAgenda !== null,
+    );
+    const pinnedId = (await users.findByTelegramUserId(MOCK_TG_ID))
+      ?.pinnedAgenda;
+    expect(pinnedId).toMatchObject({ dirty: false });
+    expect(pinChatMessage).toHaveBeenCalledWith(
+      MOCK_TG_ID,
+      pinnedId?.messageId,
+      { disable_notification: true },
+    );
+
+    // A new task for today: inside the debounce window it is only noted;
+    // the minute tick redraws the same message.
+    await authed(api().post('/api/v1/tasks/structured'))
+      .send({
+        description: 'Pinned agenda check',
+        scheduledAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      })
+      .expect(201);
+    editMessageText.mockClear();
+    const tick = await app
+      .get(RefreshPinnedAgendaUsecase)
+      .executeAll(new Date(Date.now() + 60_000));
+    expect(tick).toEqual({ updated: 1, failed: 0 });
+    expect(editMessageText).toHaveBeenCalledWith(
+      MOCK_TG_ID,
+      pinnedId?.messageId,
+      expect.stringContaining('Pinned agenda check'),
+      { parse_mode: 'HTML' },
+    );
+    // Nothing changed: the next tick leaves the message alone.
+    editMessageText.mockClear();
+    expect(
+      await app
+        .get(RefreshPinnedAgendaUsecase)
+        .executeAll(new Date(Date.now() + 120_000)),
+    ).toEqual({ updated: 0, failed: 0 });
+    expect(editMessageText).not.toHaveBeenCalled();
+
+    // Off: unpinned, deleted, forgotten.
+    await authed(api().patch('/api/v1/settings'))
+      .send({ pinnedAgenda: false })
+      .expect(200);
+    await waitFor(() => deleteMessage.mock.calls.length === 1);
+    expect(unpinChatMessage).toHaveBeenCalledWith(
+      MOCK_TG_ID,
+      pinnedId?.messageId,
+    );
+    await waitFor(
+      async () =>
+        (await users.findByTelegramUserId(MOCK_TG_ID))?.pinnedAgenda === null,
+    );
+  });
+
   it('calendar feed: off by default; a public .ics once on; a new link retires the old one', async () => {
     const off = CalendarFeed.parse(
       (await authed(api().get('/api/v1/calendar/feed')).expect(200)).body,

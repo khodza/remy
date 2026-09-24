@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import type { Message, MessageOrigin } from 'grammy/types';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -11,24 +11,34 @@ import { snoozePresets } from '@common/fire-time';
 import { getEnv } from '@common/config';
 import { AssistantResponder } from '../assistant.responder';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
+import { CommandHandler } from './command.handler';
 
 /** Telegram's own bot-API download limit. */
 const VOICE_MAX_BYTES = 20 * 1024 * 1024;
 
 @Injectable()
 export class MessageHandler {
+  private readonly logger = new Logger(MessageHandler.name);
   constructor(
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly handleMessage: HandleMessageUsecase,
     private readonly transcribeAudio: TranscribeAudioUsecase,
     private readonly responder: AssistantResponder,
+    private readonly commands: CommandHandler,
   ) {}
 
   public async handleText(ctx: Context): Promise<void> {
     const message = ctx.message;
     const text = message?.text;
     if (!message || text === undefined || ctx.from === undefined) return;
-    if (text.startsWith('/')) return; // commands have their own handler
+    if (text.startsWith('/')) {
+      // Commands have their own handlers; /lists is routed from here so the
+      // bot service's command table stays untouched.
+      if (/^\/lists(@\w+)?(\s|$)/iu.test(text)) {
+        await this.commands.handleLists(ctx);
+      }
+      return;
+    }
 
     const user = await this.ensureUserUsecase.execute(
       toEnsureUserInput(ctx.from),
@@ -105,7 +115,7 @@ export class MessageHandler {
         mimeType: voice.mime_type ?? 'audio/ogg',
       }));
     } catch (error) {
-      console.error('Failed to transcribe voice message:', error);
+      this.logger.error('Failed to transcribe voice message', error);
       await ctx.reply(
         '❌ I could not make out that voice message. Please try again, a little closer to the mic.',
       );

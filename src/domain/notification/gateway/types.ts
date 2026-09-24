@@ -13,12 +13,22 @@ export type SendReminderInput = {
   nudgeNumber?: number;
   /** When the task is due (snoozes included). */
   dueAt: Date;
+  /** A date without a time: shown as the date only. */
+  allDay?: boolean;
   /** IANA zone used to format times. */
   timezone: string;
   notes?: string | null;
   recurrence?: Recurrence | null;
   /** Shown as a quote so the user remembers why (forwarded messages). */
   sourceQuote?: { text: string; from: string | null } | null;
+};
+
+/** A voice message (OGG/Opus) in the chat, e.g. the spoken brief. */
+export type SendVoiceInput = {
+  chatId: number;
+  audio: Buffer;
+  /** Short HTML caption under the bubble. */
+  caption?: string;
 };
 
 /** A text file sent to the chat as a document (exports). */

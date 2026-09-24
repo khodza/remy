@@ -17,7 +17,14 @@ export type HandleMessageInput = {
 
 export type AssistantResult =
   | { kind: 'created'; tasks: Task[]; undoId: string }
-  | { kind: 'agenda'; range: QueryRange; search: string | null; tasks: Task[] }
+  | {
+      kind: 'agenda';
+      range: QueryRange;
+      search: string | null;
+      /** Normalised list name when the user asked for one list. */
+      list: string | null;
+      tasks: Task[];
+    }
   | { kind: 'completed'; tasks: Task[]; undoId: string }
   | {
       kind: 'rescheduled';
@@ -28,6 +35,13 @@ export type AssistantResult =
     }
   | { kind: 'deleted'; tasks: Task[]; undoId: string }
   | { kind: 'edited'; task: Task; undoId: string }
+  | {
+      kind: 'timezone_changed';
+      timezone: string;
+      /** The profile zone before (null = it was not set). */
+      previous: string | null;
+      undoId: string;
+    }
   | { kind: 'chat'; reply: string }
   | { kind: 'question'; question: string; options: string[] };
 

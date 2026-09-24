@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NotificationFailedError } from '@domain/notification/errors';
 import {
   SendDailyDigestsUsecase,
@@ -80,17 +81,30 @@ describe('SendDailyDigestsUsecase', () => {
       sendDigest: jest.fn().mockResolvedValue({ messageId: 700 }),
       sendDocument: jest.fn(),
       sendSourceLink: jest.fn(),
+      sendVoice: jest.fn(),
+      upsertPinnedAgenda: jest.fn(),
+      removePinnedAgenda: jest.fn(),
+    };
+    const speech = {
+      synthesize: jest.fn().mockResolvedValue({
+        audio: Buffer.from('ogg'),
+        mimeType: 'audio/ogg',
+      }),
     };
     const usecase = new SendDailyDigestsUsecase(
       users,
       notifications,
       conversations,
+      tasks,
       new DigestBuilder(tasks),
+      speech,
     );
-    return { tasks, users, conversations, notifications, usecase };
+    return { tasks, users, conversations, notifications, speech, usecase };
   }
 
-  beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}));
+  beforeEach(() =>
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {}),
+  );
   afterEach(() => jest.restoreAllMocks());
 
   it('sends the brief once per local day and links its numbered tasks in display order', async () => {
@@ -128,6 +142,67 @@ describe('SendDailyDigestsUsecase', () => {
       messageId: 700,
       taskIds: ['today', 'old'],
       kind: 'agenda',
+    });
+  });
+
+  it('voice brief: text first, then the spoken version; a TTS failure costs nothing', async () => {
+    const off = setup();
+    off.tasks.find.mockResolvedValue([]);
+    await off.usecase.execute(at0800);
+    expect(off.speech.synthesize).not.toHaveBeenCalled();
+
+    const on = setup(user({ voiceBrief: true }));
+    on.tasks.find.mockResolvedValue([]);
+    on.tasks.find.mockResolvedValueOnce([
+      makeTask({
+        description: 'Standup',
+        scheduledAt: new Date('2026-09-17T04:30:00Z'),
+      }),
+    ]);
+    expect(await on.usecase.execute(at0800)).toEqual({ sent: 1, failed: 0 });
+    expect(on.speech.synthesize).toHaveBeenCalledWith({
+      text: expect.stringContaining('At 09:30, Standup.'),
+    });
+    expect(on.notifications.sendVoice).toHaveBeenCalledWith({
+      chatId: 42,
+      audio: Buffer.from('ogg'),
+    });
+    expect(
+      on.notifications.sendDigest.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(on.notifications.sendVoice.mock.invocationCallOrder[0]!);
+
+    const broken = setup(user({ voiceBrief: true }));
+    broken.tasks.find.mockResolvedValue([]);
+    broken.speech.synthesize.mockRejectedValue(new Error('TTS down'));
+    expect(await broken.usecase.execute(at0800)).toEqual({
+      sent: 1,
+      failed: 0,
+    });
+    expect(broken.notifications.sendVoice).not.toHaveBeenCalled();
+  });
+
+  it('a reminder that could not be delivered is reported in the brief once', async () => {
+    const { tasks, notifications, usecase } = setup();
+    const failed = makeTask({
+      id: 'failed',
+      scheduledAt: new Date('2026-09-16T20:00:00Z'),
+      deliveryFailedAt: new Date('2026-09-16T21:00:00Z'),
+    });
+    tasks.find
+      .mockResolvedValueOnce([]) // today
+      .mockResolvedValueOnce([failed]) // overdue
+      .mockResolvedValueOnce([]) // inbox
+      .mockResolvedValueOnce([failed]); // undelivered
+    tasks.update.mockResolvedValue(failed);
+
+    await usecase.execute(at0800);
+    expect(notifications.sendDigest.mock.calls[0]![0]).toMatchObject({
+      kind: 'brief',
+      undelivered: [failed],
+    });
+    expect(tasks.update).toHaveBeenCalledWith({
+      id: 'failed',
+      deliveryFailedAt: null,
     });
   });
 

@@ -21,6 +21,7 @@ describe('UpdateTimezoneUsecase', () => {
     settings: structuredClone(DEFAULT_USER_SETTINGS),
     categories: null,
     calendarToken: null,
+    pinnedAgenda: null,
     createdAt: now,
     updatedAt: now,
   };

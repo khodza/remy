@@ -4,11 +4,13 @@ import type { Task } from '@domain/task';
 import type {
   Digest,
   MorningBrief,
+  PinnedAgenda,
   ReviewItem,
   ReviewState,
   WeeklyWrap,
 } from '@domain/rhythm';
 import { effectiveDueAt } from '@common/fire-time';
+import { isTaskOverdue } from '@common/all-day';
 import { getEnv } from '@common/config';
 import { BRIEF_MAX_OVERDUE, BRIEF_MAX_TODAY } from '@usecases/rhythm';
 import { escapeHtml } from '../html';
@@ -17,6 +19,8 @@ import type { BotReply } from './assistant.presenter';
 const INBOX_NAME_MAX = 30;
 /** Calendar events listed in the brief before "…and N more". */
 export const BRIEF_MAX_EVENTS = 8;
+/** Lines of tasks in the pinned agenda; the rest is "…and N more". */
+export const PINNED_AGENDA_MAX_LINES = 20;
 
 export function presentDigest(
   digest: Digest,
@@ -30,6 +34,54 @@ export function presentDigest(
     case 'wrap':
       return presentWrap(digest);
   }
+}
+
+// ---------------------------------------------------------- pinned agenda ---
+
+/**
+ * The live "Today" message. Done one-offs stay in the list, struck through,
+ * so the day reads as a whole; an overdue slot is marked red. No keyboard:
+ * the message is edited in place, taps belong to the reminders.
+ */
+export function presentPinnedAgenda(agenda: PinnedAgenda): string {
+  const tz = agenda.timezone;
+  const lines: string[] = [
+    `📌 <b>Today</b> · ${formatInTimeZone(agenda.now, tz, 'EEE d MMM')} · <i>updated ${formatInTimeZone(agenda.now, tz, 'HH:mm')}</i>`,
+    '',
+  ];
+  const entries = [
+    ...agenda.today.map((task) => ({ task, done: false })),
+    ...agenda.doneToday.map((task) => ({ task, done: true })),
+  ].sort(
+    (a, b) =>
+      (effectiveDueAt(a.task)?.getTime() ?? 0) -
+      (effectiveDueAt(b.task)?.getTime() ?? 0),
+  );
+  if (entries.length === 0) {
+    lines.push('Nothing scheduled for today.');
+  } else {
+    for (const { task, done } of entries.slice(0, PINNED_AGENDA_MAX_LINES)) {
+      const clock = task.allDay ? 'all day' : time(task, tz, 'HH:mm');
+      const title = escapeHtml(task.description);
+      if (done) {
+        lines.push(`✅ <s>${clock} ${title}</s>`);
+      } else if (isTaskOverdue(task, agenda.now)) {
+        lines.push(`🔴 <b>${clock}</b> ${title}${marks(task)}`);
+      } else {
+        lines.push(`<b>${clock}</b> ${title}${marks(task)}`);
+      }
+    }
+    if (entries.length > PINNED_AGENDA_MAX_LINES) {
+      lines.push(`…and ${entries.length - PINNED_AGENDA_MAX_LINES} more`);
+    }
+  }
+  const footer: string[] = [];
+  if (agenda.overdueBefore > 0)
+    footer.push(`🔴 ${agenda.overdueBefore} overdue from before today`);
+  if (agenda.inboxCount > 0)
+    footer.push(`📥 ${agenda.inboxCount} in the Inbox`);
+  if (footer.length > 0) lines.push('', footer.join(' · '));
+  return lines.join('\n');
 }
 
 // ------------------------------------------------------------------ brief ---
@@ -75,6 +127,17 @@ export function presentBrief(brief: MorningBrief): BotReply {
     if (brief.overdue.length > overdue.length) {
       lines.push(`   …and ${brief.overdue.length - overdue.length} more`);
     }
+  }
+
+  if (brief.undelivered.length > 0) {
+    const names = brief.undelivered.map(
+      (t) =>
+        `${escapeHtml(truncate(t.description, INBOX_NAME_MAX))} (${time(t, tz, 'EEE HH:mm')})`,
+    );
+    lines.push(
+      '',
+      `⚠️ <b>Could not be delivered</b> · ${brief.undelivered.length}: ${names.join(', ')}. Telegram did not take the reminder after several tries; give it a new time if it still matters.`,
+    );
   }
 
   if (brief.inboxCount > 0) {
@@ -124,10 +187,17 @@ export function briefKeyboard(hasOverdue: boolean): InlineKeyboard | undefined {
 
 // ----------------------------------------------------------------- review ---
 
-/** Used for the first send and for every redraw after a row is resolved. */
+/** Callback prefix of the Undo row under an evening review. */
+export const REVIEW_UNDO_PREFIX = 'rvundo:';
+
+/**
+ * Used for the first send and for every redraw after a row is resolved.
+ * `undo` names the last tap, so the redrawn message carries its Undo.
+ */
 export function presentReview(
   review: ReviewState,
   now: Date = new Date(),
+  undo: { id: string; label: string } | null = null,
 ): BotReply {
   const tz = review.timezone;
   const lines: string[] = [
@@ -146,14 +216,24 @@ export function presentReview(
     lines.push(reviewLine(item, i + 1, tz, now)),
   );
 
+  const keyboard = new InlineKeyboard();
+  let rows = 0;
+  const undoRow = (): void => {
+    if (!undo) return;
+    if (rows++ > 0) keyboard.row();
+    keyboard.text(
+      `↩ Undo: ${undo.label.slice(0, 40)}`,
+      `${REVIEW_UNDO_PREFIX}${undo.id}`,
+    );
+  };
+
   const open = review.items.filter((i) => i.outcome === null);
   if (open.length === 0) {
     lines.push('', 'All sorted. Good night! 🌙');
-    return { html: lines.join('\n') };
+    undoRow();
+    return { html: lines.join('\n'), ...(undo ? { keyboard } : {}) };
   }
 
-  const keyboard = new InlineKeyboard();
-  let rows = 0;
   review.items.forEach((item, i) => {
     if (item.outcome !== null) return;
     // Start a new row between items; a trailing empty row is invalid.
@@ -167,6 +247,7 @@ export function presentReview(
   });
   if (open.length >= 2)
     keyboard.row().text('⏭ All open → tomorrow 09:00', 'rv:all');
+  undoRow();
   return { html: lines.join('\n'), keyboard };
 }
 
@@ -266,7 +347,15 @@ function calendarLines(brief: MorningBrief, tz: string): string[] {
 
 function time(task: Task, tz: string, pattern: string): string {
   const due = effectiveDueAt(task);
-  return due ? formatInTimeZone(due, tz, pattern) : '—';
+  if (!due) return '—';
+  if (task.allDay) {
+    // The date part of the pattern, if any, then "all day" for the clock.
+    const datePart = pattern.replace(/\s*HH:mm/, '').trim();
+    return datePart
+      ? `${formatInTimeZone(due, tz, datePart)} all day`
+      : 'all day';
+  }
+  return formatInTimeZone(due, tz, pattern);
 }
 
 function marks(task: Task): string {

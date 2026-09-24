@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { SendPendingRemindersUsecase } from './usecase';
 import type { TaskRepository } from '@domain/task/repository';
 import type { NotificationGateway } from '@domain/notification/gateway';
@@ -48,6 +49,9 @@ describe('SendPendingRemindersUsecase', () => {
       sendDigest: jest.fn(),
       sendDocument: jest.fn(),
       sendSourceLink: jest.fn(),
+      sendVoice: jest.fn(),
+      upsertPinnedAgenda: jest.fn(),
+      removePinnedAgenda: jest.fn(),
     };
     conversations = mockConversationRepository();
     const users = mockUserRepository(
@@ -66,7 +70,7 @@ describe('SendPendingRemindersUsecase', () => {
 
   beforeEach(() => {
     jest.useFakeTimers({ now });
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     setup();
   });
 
@@ -111,6 +115,7 @@ describe('SendPendingRemindersUsecase', () => {
       description: 'Buy groceries',
       kind: 'due',
       dueAt: new Date('2026-04-16T11:30:00Z'), // the snooze, not the series time
+      allDay: false,
       timezone: 'Asia/Tashkent',
       notes: null,
       recurrence: { type: 'daily' },
@@ -184,7 +189,63 @@ describe('SendPendingRemindersUsecase', () => {
       'busy',
       previous,
       new Date('2026-04-16T12:02:00Z'),
+      { countAttempt: true },
     );
+  });
+
+  describe('retry with backoff', () => {
+    const transient = () =>
+      notificationGateway.sendReminder.mockRejectedValueOnce(
+        new NotificationFailedError('502'),
+      );
+
+    it.each([
+      [0, 2],
+      [1, 4],
+      [2, 8],
+      [3, 16],
+      [4, 32],
+    ])(
+      'after %i earlier failures the next hold is %i minutes',
+      async (attempts, minutes) => {
+        queueClaims([makeTask({ id: 't', reminderAttempts: attempts })]);
+        transient();
+        await usecase.execute();
+        expect(taskRepository.releaseReminderClaim).toHaveBeenCalledWith(
+          't',
+          undefined,
+          new Date(now.getTime() + minutes * 60_000),
+          { countAttempt: true },
+        );
+        expect(taskRepository.markDeliveryFailed).not.toHaveBeenCalled();
+      },
+    );
+
+    it('gives up after the last attempt: marks the task failed-to-deliver and keeps the claim', async () => {
+      queueClaims([makeTask({ id: 't', reminderAttempts: 5 })]);
+      transient();
+      const result = await usecase.execute();
+      expect(taskRepository.markDeliveryFailed).toHaveBeenCalledWith('t', now);
+      expect(taskRepository.releaseReminderClaim).not.toHaveBeenCalled();
+      expect(result.failedCount).toBe(1);
+    });
+
+    it('a send that finally works resets the attempt count', async () => {
+      queueClaims([makeTask({ id: 't', reminderAttempts: 3 })]);
+      await usecase.execute();
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 't',
+        reminderAttempts: 0,
+      });
+    });
+
+    it('a first-time send does not write an attempt reset', async () => {
+      queueClaims([makeTask({ id: 't' })]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reminderAttempts: 0 }),
+      );
+    });
   });
 
   describe('"remind me before"', () => {
@@ -283,6 +344,51 @@ describe('SendPendingRemindersUsecase', () => {
   });
 
   describe('nudges for ignored reminders (steps 30, 120)', () => {
+    it('high priority nudges harder: 10, 30 and 60 minutes, whatever the normal steps are', async () => {
+      setup({ escalation: { enabled: true, stepsMinutes: [45] } });
+      queueClaims([makeTask({ priority: 'high' })]);
+      await usecase.execute();
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        nudgeAt: new Date('2026-04-16T12:10:00Z'),
+        nudgeCount: 0,
+      });
+
+      // Second nudge 20 minutes after the first (30 - 10), third 30 later.
+      const nudgeAt = new Date('2026-04-16T12:00:00Z');
+      for (const [count, next] of [
+        [0, '2026-04-16T12:20:00Z'],
+        [1, '2026-04-16T12:30:00Z'],
+        [2, null],
+      ] as const) {
+        taskRepository.update.mockClear();
+        queueClaims([
+          makeTask({
+            priority: 'high',
+            scheduledAt: new Date('2026-04-16T11:00:00Z'),
+            nudgeAt,
+            nextFireAt: nudgeAt,
+            nudgeCount: count,
+          }),
+        ]);
+        await usecase.execute();
+        expect(taskRepository.update).toHaveBeenCalledWith({
+          id: 'task-1',
+          nudgeCount: count + 1,
+          nudgeAt: next === null ? null : new Date(next),
+        });
+      }
+    });
+
+    it('high priority still respects the master switch', async () => {
+      setup({ escalation: { enabled: false, stepsMinutes: [30, 120] } });
+      queueClaims([makeTask({ priority: 'high' })]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ nudgeCount: 0 }),
+      );
+    });
+
     it('after the reminder, schedules the first nudge 30 minutes later', async () => {
       queueClaims([makeTask()]);
       await usecase.execute();

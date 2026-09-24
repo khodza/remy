@@ -55,6 +55,7 @@ import {
 } from '@contract/remy-contract';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { PinnedAgendaInterceptor } from '../interceptors/pinned-agenda.interceptor';
 import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
 import { recurrenceFromWire, toTaskWire } from '../mappers/task.mapper';
 import type { AuthContext } from '../types';
@@ -64,6 +65,7 @@ const VOICE_ALLOWED_MIME_PREFIXES = ['audio/', 'video/webm'];
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard)
+@UseInterceptors(PinnedAgendaInterceptor)
 export class TaskController {
   constructor(
     @Inject(Domain.Task.Repository)

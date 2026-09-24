@@ -86,6 +86,15 @@ export class UserRepositoryImpl implements UserRepository {
         updateData['categories'] = params.categories;
       if (params.calendarToken !== undefined)
         updateData['calendar_token'] = params.calendarToken;
+      if (params.pinnedAgenda !== undefined)
+        updateData['pinned_agenda'] = params.pinnedAgenda
+          ? {
+              message_id: params.pinnedAgenda.messageId,
+              fingerprint: params.pinnedAgenda.fingerprint,
+              updated_at: params.pinnedAgenda.updatedAt,
+              dirty: params.pinnedAgenda.dirty,
+            }
+          : null;
 
       const doc = await this.model.findByIdAndUpdate(
         params.id,
@@ -155,6 +164,14 @@ export class UserRepositoryImpl implements UserRepository {
           }))
         : null,
       calendarToken: document.calendar_token ?? null,
+      pinnedAgenda: document.pinned_agenda
+        ? {
+            messageId: document.pinned_agenda.message_id,
+            fingerprint: document.pinned_agenda.fingerprint,
+            updatedAt: document.pinned_agenda.updated_at,
+            dirty: document.pinned_agenda.dirty ?? false,
+          }
+        : null,
       createdAt: document.created_at,
       updatedAt: document.updated_at,
     };

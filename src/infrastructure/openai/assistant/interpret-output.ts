@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import { addDays, addMinutes, getDay, isValid } from 'date-fns';
 import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
-import { computeNextOccurrence } from '@common/recurrence';
+import {
+  MAX_RECURRENCE_COUNT,
+  computeNextOccurrence,
+} from '@common/recurrence';
+import { allDayFireTime } from '@common/all-day';
+import { dayBoundsInZone } from '@common/day-bounds';
+import { canonicalTimeZone, cityOfTimeZone } from '@common/timezones';
 import type {
   CandidateTask,
   Interpretation,
@@ -26,6 +32,7 @@ const RecurrenceOut = z
     by_weekday: z.array(z.number().int()).nullable(),
     last_day_of_month: z.boolean().nullable(),
     until_local: Local,
+    count: z.number().int().nullable(),
   })
   .nullable();
 
@@ -37,6 +44,7 @@ const ModelOutput = z.object({
     'reschedule',
     'delete',
     'edit',
+    'set_timezone',
     'chat',
     'unclear',
   ]),
@@ -44,18 +52,21 @@ const ModelOutput = z.object({
     z.object({
       title: z.string(),
       due_local: Local,
+      all_day: z.boolean().nullable(),
       in_minutes: z.number().int().nullable(),
       recurrence: RecurrenceOut,
       priority: z.enum(['low', 'normal', 'high']),
       category: z.string().nullable(),
       lead_minutes: z.number().int().nullable(),
       notes: z.string().nullable(),
+      list: z.string().nullable(),
     }),
   ),
   query_range: z
     .enum(['today', 'tomorrow', 'week', 'overdue', 'inbox', 'all'])
     .nullable(),
   query_search: z.string().nullable(),
+  list: z.string().nullable(),
   targets: z.array(z.number().int()),
   due_local: Local,
   in_minutes: z.number().int().nullable(),
@@ -65,6 +76,7 @@ const ModelOutput = z.object({
   reply: z.string().nullable(),
   question: z.string().nullable(),
   options: z.array(z.string()),
+  timezone: z.string().nullable(),
 });
 export type AssistantModelOutput = z.infer<typeof ModelOutput>;
 
@@ -152,6 +164,11 @@ export function interpretAssistantOutput(
     question,
     options,
   });
+  // A named list the action applies to: only when the user actually named
+  // it (a word of the list name is in the message), else the model made
+  // it up and "clear the list" would empty the wrong one.
+  const list = out.list?.trim() ? out.list.trim() : null;
+  const listNamed = list !== null && mentionsList(ctx.text, list);
 
   switch (out.intent) {
     case 'create': {
@@ -167,6 +184,16 @@ export function interpretAssistantOutput(
           dueAt = alignToNamedWeekday(dueAt, ctx.text, ctx.timezone);
         if (dueAt === 'invalid')
           return ask(`When exactly should I remind you about "${title}"?`);
+        // A date with no time: only when the user really named none. A
+        // clock time or "tonight" in the message means the model slipped.
+        const allDay =
+          t.all_day === true &&
+          dueAt instanceof Date &&
+          t.in_minutes === null &&
+          !MENTIONS_CLOCK_TIME.test(ctx.text) &&
+          !MENTIONS_TIME_OF_DAY.test(ctx.text);
+        if (allDay && dueAt instanceof Date)
+          dueAt = allDayFireTime(dueAt, ctx.timezone);
         const recurrence = dueAt
           ? toRecurrence(t.recurrence, ctx.timezone)
           : null;
@@ -182,7 +209,11 @@ export function interpretAssistantOutput(
           );
         } else if (
           firstAt &&
-          firstAt.getTime() < ctx.now.getTime() - PAST_TOLERANCE_MS
+          (allDay
+            ? // An all-day task is only late once its whole day is over.
+              dayBoundsInZone(firstAt, ctx.timezone).end.getTime() <=
+              ctx.now.getTime()
+            : firstAt.getTime() < ctx.now.getTime() - PAST_TOLERANCE_MS)
         ) {
           return ask(
             `"${capitalise(title)}": that time has already passed. When should I remind you?`,
@@ -203,6 +234,8 @@ export function interpretAssistantOutput(
               ? t.lead_minutes
               : null,
           notes: t.notes?.trim() ? t.notes.trim() : null,
+          allDay,
+          list: t.list?.trim() ? t.list.trim() : null,
         });
       }
       if (tasks.length === 0) return FALLBACK_QUESTION;
@@ -224,14 +257,18 @@ export function interpretAssistantOutput(
     case 'query':
       return {
         intent: 'query',
-        range: out.query_range ?? 'today',
+        // A list is browsed whole unless a range was asked for.
+        range: out.query_range ?? (list ? 'all' : 'today'),
         search: out.query_search?.trim() ? out.query_search.trim() : null,
+        list,
       };
     case 'complete':
+      if (listNamed) return { intent: 'complete', targetIds, list };
       return targetIds.length > 0
         ? { intent: 'complete', targetIds }
         : ask('Which task did you finish?');
     case 'delete':
+      if (listNamed) return { intent: 'delete', targetIds, list };
       return targetIds.length > 0
         ? { intent: 'delete', targetIds }
         : ask('Which task should I delete?');
@@ -278,6 +315,16 @@ export function interpretAssistantOutput(
         return ask('What should I change it to?');
       return { intent: 'edit', targetId, title, notes };
     }
+    case 'set_timezone': {
+      // Only a zone the runtime knows, and only when the user plausibly
+      // meant it: a zone or city word in the message, a timezone keyword,
+      // or a message that is little more than the place name ("Tashkent").
+      const zone = canonicalTimeZone(out.timezone);
+      if (zone === null || !mentionsZone(ctx.text, zone)) {
+        return ask(TIMEZONE_QUESTION);
+      }
+      return { intent: 'set_timezone', timezone: zone };
+    }
     case 'chat':
       return { intent: 'chat', reply: out.reply?.trim() || '🙂' };
     case 'unclear':
@@ -299,6 +346,9 @@ const MENTIONS_CLOCK_TIME =
   /\b(at|by|@)\s*\d{1,2}\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*[ap]\.?m\b|(^|\s)(в|к)\s*\d{1,2}(\s|$|[:.,])|soat\s*\d{1,2}/iu;
 const WANTS_NO_DATE =
   /\b(no|without)(\s+(a|an|any))?\s+(date|time)\b|без\s*(даты|времени)|sanasiz/iu;
+/** "tonight", "in the morning", "утром", "kechqurun": a time of day was named. */
+const MENTIONS_TIME_OF_DAY =
+  /\b(morning|noon|midday|lunch(time)?|afternoon|evening|tonight|night|midnight)\b|утр[ао]м?|днём|днем|полдень|обед|вечер\p{L}*|ноч\p{L}*|ertalab|tushlik|kechqurun|kech(asi|a)|tun\p{L}*/iu;
 
 /** Weekday names by date-fns day number (0 = Sunday): English, Russian, Uzbek. */
 const WEEKDAY_NAMES: RegExp[] = [
@@ -368,6 +418,42 @@ function isGrounded(ctx: InterpretContext, targetIds: string[]): boolean {
   });
 }
 
+const TIMEZONE_QUESTION =
+  'Which timezone? Send me your city or the zone name, e.g. Europe/Berlin or Asia/Tashkent.';
+const TIMEZONE_KEYWORDS =
+  /time\s*zone|timezone|\butc\b|\bgmt\b|часов\p{L}*\s+пояс|пояс|vaqt\s*(mintaqa|zona)/iu;
+
+function mentionsZone(text: string, zone: string): boolean {
+  if (TIMEZONE_KEYWORDS.test(text)) return true;
+  const said = words(text);
+  const named = [
+    ...words(cityOfTimeZone(zone)),
+    ...(zone === 'UTC' ? ['utc'] : []),
+  ];
+  if (
+    named.some((w) =>
+      said.some(
+        (u) => u.startsWith(w.slice(0, 4)) || w.startsWith(u.slice(0, 4)),
+      ),
+    )
+  ) {
+    return true;
+  }
+  // "Ташкент" / "Toshkent" for Asia/Tashkent: the model translated the
+  // city. A message this short is an answer to "send me your city".
+  return (text.match(/\p{L}+/gu) ?? []).length <= 4;
+}
+
+/** A word of the list name (as given or normalised) appears in the message. */
+function mentionsList(text: string, list: string): boolean {
+  const said = words(text);
+  return words(list).some((w) =>
+    said.some(
+      (u) => u.startsWith(w.slice(0, 4)) || w.startsWith(u.slice(0, 4)),
+    ),
+  );
+}
+
 function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
@@ -433,6 +519,14 @@ function toRecurrence(
   if (r.until_local) {
     const until = fromZonedTime(r.until_local, timezone);
     if (isValid(until)) recurrence.until = until;
+  }
+  if (
+    r.count !== null &&
+    Number.isInteger(r.count) &&
+    r.count >= 1 &&
+    r.count <= MAX_RECURRENCE_COUNT
+  ) {
+    recurrence.count = r.count;
   }
   return recurrence;
 }

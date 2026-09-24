@@ -1,4 +1,10 @@
-import { Body, Controller, Delete, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { DeleteAllDataUsecase } from '@usecases/data';
 import {
@@ -7,11 +13,14 @@ import {
 } from '@contract/remy-contract';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { PinnedAgendaInterceptor } from '../interceptors/pinned-agenda.interceptor';
 import { ZodValidationPipe } from '../pipes/zod-validation.pipe';
 import type { AuthContext } from '../types';
 
 @Controller('data')
 @UseGuards(JwtAuthGuard)
+// Settings go back to defaults, so the pinned agenda comes down with the data.
+@UseInterceptors(PinnedAgendaInterceptor)
 export class AccountDataController {
   constructor(private readonly deleteAllData: DeleteAllDataUsecase) {}
 

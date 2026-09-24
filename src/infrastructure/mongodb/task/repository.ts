@@ -25,6 +25,7 @@ import {
 import { ApplicationError } from '@domain/error';
 import { getEnv } from '@common/config';
 import { deriveNextFireAt } from '@common/fire-time';
+import { rolloverTimeOf } from '@common/recurrence';
 
 const LEGACY_TIMEZONE_FALLBACK = 'UTC';
 const LEGACY_SOURCE: TaskSource = {
@@ -130,6 +131,34 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         { timestamps: false },
       ),
     );
+    // rollover_at needs recurrence math per document; only pending repeating
+    // tasks matter (the scan reads nothing else), and there are few.
+    await step('rollover_at', async () => {
+      const docs = await this.model.find({
+        status: TaskStatus.Pending,
+        recurrence: { $ne: null },
+        rollover_at: { $exists: false },
+      });
+      let modifiedCount = 0;
+      for (const doc of docs) {
+        const task = this.documentToEntity(doc);
+        await this.model.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              rollover_at: rolloverAtOf(
+                task.scheduledAt,
+                task.recurrence,
+                task.timezone,
+              ),
+            },
+          },
+          { timestamps: false },
+        );
+        modifiedCount++;
+      }
+      return { modifiedCount };
+    });
     // Tasks deleted before the purge existed start their 30 days from their
     // last change, so old deletions go on the first TTL pass after that.
     await step('deleted_at', () =>
@@ -163,9 +192,16 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
           leadSentFor: null,
         }),
         next_attempt_at: null,
+        reminder_attempts: 0,
+        delivery_failed_at: null,
         lead_minutes: params.leadMinutes ?? null,
         lead_sent_for: null,
         due_at: params.scheduledAt,
+        rollover_at: rolloverAtOf(
+          params.scheduledAt,
+          params.recurrence ?? null,
+          params.timezone,
+        ),
         nudge_at: null,
         nudge_count: 0,
         snooze_count: 0,
@@ -222,6 +258,9 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       query['completed_at'] = { $gte: filter.completedAtOrAfter };
     }
     if (filter.list !== undefined) query['list'] = filter.list;
+    if (filter.deliveryFailed === true) {
+      query['delivery_failed_at'] = { $ne: null };
+    }
     const words = (filter.search ?? []).filter((w) => w.trim() !== '');
     if (words.length > 0) {
       // Every word somewhere in the title, the notes or the list name.
@@ -330,6 +369,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     id: string,
     previousLastSentAt: Date | undefined,
     nextAttemptAt: Date,
+    options: { countAttempt?: boolean } = {},
   ): Promise<void> {
     await this.model.updateOne(
       { _id: id },
@@ -338,15 +378,29 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
           last_sent_at: previousLastSentAt ?? null,
           next_attempt_at: nextAttemptAt,
         },
+        ...(options.countAttempt ? { $inc: { reminder_attempts: 1 } } : {}),
+      },
+    );
+  }
+
+  public async markDeliveryFailed(id: string, at: Date): Promise<void> {
+    // last_sent_at stays at the claim, so the task is not claimed again
+    // for this fire time; a new time clears everything (see update()).
+    await this.model.updateOne(
+      { _id: id },
+      {
+        $set: { delivery_failed_at: at, next_attempt_at: null },
+        $inc: { reminder_attempts: 1 },
       },
     );
   }
 
   public async findOverdueRecurring(beforeDate: Date): Promise<Task[]> {
+    // rollover_at is the next cycle's time, so a task that was merely
+    // reminded and ignored is not rescanned every minute until then (B10).
     const docs = await this.model.find({
       status: TaskStatus.Pending,
-      scheduled_at: { $ne: null, $lte: beforeDate },
-      recurrence: { $ne: null },
+      rollover_at: { $ne: null, $lte: beforeDate },
     });
     return docs.map((doc) => this.documentToEntity(doc));
   }
@@ -364,6 +418,10 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         set['snoozed_until'] = params.snoozedUntil;
       if (params.nextAttemptAt !== undefined)
         set['next_attempt_at'] = params.nextAttemptAt;
+      if (params.reminderAttempts !== undefined)
+        set['reminder_attempts'] = params.reminderAttempts;
+      if (params.deliveryFailedAt !== undefined)
+        set['delivery_failed_at'] = params.deliveryFailedAt;
       if (params.leadMinutes !== undefined)
         set['lead_minutes'] = params.leadMinutes;
       if (params.leadSentFor !== undefined)
@@ -398,6 +456,24 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         set['nudge_at'] = null;
         set['nudge_count'] = 0;
       }
+      // …and a fresh delivery: the retry count and a failed-delivery mark
+      // belonged to the old fire time.
+      if (timeChanged) {
+        if (params.reminderAttempts === undefined) set['reminder_attempts'] = 0;
+        if (params.deliveryFailedAt === undefined)
+          set['delivery_failed_at'] = null;
+      }
+
+      // The document as it is now, read once and only when a derived field
+      // depends on fields this update does not set.
+      let loaded: TaskDocument | undefined;
+      const current = async (): Promise<TaskDocument> => {
+        loaded ??= (await this.model.findById(params.id)) ?? undefined;
+        if (!loaded) {
+          throw new TaskNotFoundError(`Task with id ${params.id} not found`);
+        }
+        return loaded;
+      };
 
       // next_fire_at and due_at are derived; recompute whenever an input changes.
       if (
@@ -406,10 +482,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         params.leadSentFor !== undefined ||
         params.nudgeAt !== undefined
       ) {
-        const existing = await this.model.findById(params.id);
-        if (!existing) {
-          throw new TaskNotFoundError(`Task with id ${params.id} not found`);
-        }
+        const existing = await current();
         const pick = <T>(next: T | undefined, current: T): T =>
           next !== undefined ? next : current;
         const scheduledAt = pick(
@@ -463,6 +536,24 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         });
         set['due_at'] =
           scheduledAt === null ? null : (snoozedUntil ?? scheduledAt);
+      }
+
+      // rollover_at follows the series time, the recurrence and the zone.
+      if (
+        params.scheduledAt !== undefined ||
+        params.recurrence !== undefined ||
+        params.timezone !== undefined
+      ) {
+        const existing = this.documentToEntity(await current());
+        set['rollover_at'] = rolloverAtOf(
+          params.scheduledAt !== undefined
+            ? params.scheduledAt
+            : existing.scheduledAt,
+          params.recurrence !== undefined
+            ? params.recurrence
+            : existing.recurrence,
+          params.timezone ?? existing.timezone,
+        );
       }
 
       const update: Record<string, unknown> = { $set: set };
@@ -521,6 +612,8 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       snoozedUntil,
       nextFireAt,
       nextAttemptAt: document.next_attempt_at ?? null,
+      reminderAttempts: document.reminder_attempts ?? 0,
+      deliveryFailedAt: document.delivery_failed_at ?? null,
       leadMinutes: document.lead_minutes ?? null,
       leadSentFor: document.lead_sent_for ?? null,
       nudgeAt: document.nudge_at ?? null,
@@ -541,6 +634,16 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       updatedAt: document.updated_at,
     };
   }
+}
+
+/** The stored rollover_at for a task with this series time and recurrence. */
+function rolloverAtOf(
+  scheduledAt: Date | null,
+  recurrence: Recurrence | null,
+  timezone: string,
+): Date | null {
+  if (scheduledAt === null || recurrence === null) return null;
+  return rolloverTimeOf(scheduledAt, recurrence, timezone);
 }
 
 function escapeRegex(text: string): string {

@@ -128,6 +128,119 @@ describe('NotificationGatewayImpl', () => {
     expect((error as NotificationFailedError).permanent).toBe(false);
   });
 
+  it('sends a voice message as an OGG file, failures wrapped like any send', async () => {
+    const sendVoice = jest.fn().mockResolvedValue({ message_id: 5 });
+    gateway = new NotificationGatewayImpl({
+      getBot: () => ({ api: { sendVoice } }),
+    } as unknown as TelegramBotService);
+    await gateway.sendVoice({ chatId: 12345, audio: Buffer.from('ogg') });
+    expect(sendVoice).toHaveBeenCalledWith(
+      12345,
+      expect.objectContaining({ filename: 'brief.ogg' }),
+      {},
+    );
+
+    sendVoice.mockRejectedValueOnce(
+      telegramError(403, 'Forbidden: bot was blocked'),
+    );
+    await expect(
+      gateway.sendVoice({ chatId: 12345, audio: Buffer.from('ogg') }),
+    ).rejects.toMatchObject({ permanent: true });
+  });
+
+  describe('pinned agenda', () => {
+    const agenda = {
+      chatId: 12345,
+      timezone: 'Asia/Tashkent',
+      now: new Date('2026-04-16T05:00:00Z'),
+      today: [],
+      doneToday: [],
+      overdueBefore: 0,
+      inboxCount: 0,
+    };
+    let api: Record<string, jest.Mock>;
+    beforeEach(() => {
+      api = {
+        sendMessage,
+        editMessageText: jest.fn().mockResolvedValue(true),
+        pinChatMessage: jest.fn().mockResolvedValue(true),
+        unpinChatMessage: jest.fn().mockResolvedValue(true),
+        deleteMessage: jest.fn().mockResolvedValue(true),
+      };
+      gateway = new NotificationGatewayImpl({
+        getBot: () => ({ api }),
+      } as unknown as TelegramBotService);
+    });
+
+    it('first time: sends silently and pins', async () => {
+      await expect(gateway.upsertPinnedAgenda(agenda, null)).resolves.toEqual({
+        messageId: 77,
+      });
+      expect(sendMessage).toHaveBeenCalledWith(
+        12345,
+        expect.stringContaining('📌 <b>Today</b>'),
+        expect.objectContaining({
+          parse_mode: 'HTML',
+          disable_notification: true,
+        }),
+      );
+      expect(api['pinChatMessage']).toHaveBeenCalledWith(12345, 77, {
+        disable_notification: true,
+      });
+    });
+
+    it('later: edits in place; "not modified" is fine', async () => {
+      await expect(gateway.upsertPinnedAgenda(agenda, 50)).resolves.toEqual({
+        messageId: 50,
+      });
+      expect(api['editMessageText']).toHaveBeenCalledWith(
+        12345,
+        50,
+        expect.stringContaining('Nothing scheduled'),
+        { parse_mode: 'HTML' },
+      );
+      expect(sendMessage).not.toHaveBeenCalled();
+
+      api['editMessageText']!.mockRejectedValueOnce(
+        telegramError(400, 'Bad Request: message is not modified'),
+      );
+      await expect(gateway.upsertPinnedAgenda(agenda, 50)).resolves.toEqual({
+        messageId: 50,
+      });
+    });
+
+    it('a deleted message is replaced and re-pinned; other errors surface', async () => {
+      api['editMessageText']!.mockRejectedValueOnce(
+        telegramError(400, 'Bad Request: message to edit not found'),
+      );
+      await expect(gateway.upsertPinnedAgenda(agenda, 50)).resolves.toEqual({
+        messageId: 77,
+      });
+      expect(api['unpinChatMessage']).toHaveBeenCalledWith(12345, 50);
+      expect(api['pinChatMessage']).toHaveBeenCalledWith(12345, 77, {
+        disable_notification: true,
+      });
+
+      api['editMessageText']!.mockRejectedValueOnce(
+        telegramError(429, 'Too Many Requests'),
+      );
+      await expect(
+        gateway.upsertPinnedAgenda(agenda, 50),
+      ).rejects.toMatchObject({ permanent: false });
+    });
+
+    it('remove: unpins and deletes, ignoring a message that is already gone', async () => {
+      api['deleteMessage']!.mockRejectedValueOnce(
+        telegramError(400, 'Bad Request: message to delete not found'),
+      );
+      await expect(
+        gateway.removePinnedAgenda(12345, 50),
+      ).resolves.toBeUndefined();
+      expect(api['unpinChatMessage']).toHaveBeenCalledWith(12345, 50);
+      expect(api['deleteMessage']).toHaveBeenCalledWith(12345, 50);
+    });
+  });
+
   describe('sendSourceLink', () => {
     const link = {
       chatId: 12345,

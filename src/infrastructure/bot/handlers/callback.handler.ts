@@ -1,10 +1,9 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import { MarkCompleteUsecase } from '@usecases/task/mark-complete';
 import { DelayTaskUsecase } from '@usecases/task/delay-task';
 import { SnoozeTaskUsecase } from '@usecases/task/snooze-task';
 import { DeleteTaskUsecase } from '@usecases/task/delete-task';
-import { UpdateTimezoneUsecase } from '@usecases/user/update-timezone';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { UndoActionUsecase, UndoRecorder } from '@usecases/assistant';
 import type { ConversationRepository } from '@domain/conversation';
@@ -23,12 +22,19 @@ import { ignoreNotModified } from '../telegram-safe';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
 import {
   MoveOverdueToTodayUsecase,
+  RefreshPinnedAgendaUsecase,
   ResolveReviewItemUsecase,
   type ReviewAction,
 } from '@usecases/rhythm';
-import { briefKeyboard, presentReview } from '../presenters/rhythm.presenter';
+import {
+  REVIEW_UNDO_PREFIX,
+  briefKeyboard,
+  presentReview,
+} from '../presenters/rhythm.presenter';
 import { presentAssistantResult } from '../presenters/assistant.presenter';
+import { LIST_CALLBACK_PREFIX } from '../presenters/lists.presenter';
 import { AssistantResponder } from '../assistant.responder';
+import { CommandHandler } from './command.handler';
 
 /** Short text shown as the toast after a button tap. */
 type Toast = string;
@@ -42,18 +48,20 @@ const FORWARD_ANSWERS: Record<string, string> = {
 
 @Injectable()
 export class CallbackHandler {
+  private readonly logger = new Logger(CallbackHandler.name);
   constructor(
     private readonly markCompleteUsecase: MarkCompleteUsecase,
     private readonly delayTaskUsecase: DelayTaskUsecase,
     private readonly snoozeTaskUsecase: SnoozeTaskUsecase,
     private readonly deleteTaskUsecase: DeleteTaskUsecase,
-    private readonly updateTimezoneUsecase: UpdateTimezoneUsecase,
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly undoAction: UndoActionUsecase,
     private readonly undoRecorder: UndoRecorder,
     private readonly responder: AssistantResponder,
     private readonly resolveReview: ResolveReviewItemUsecase,
     private readonly moveOverdue: MoveOverdueToTodayUsecase,
+    private readonly commands: CommandHandler,
+    private readonly pinnedAgenda: RefreshPinnedAgendaUsecase,
     @Inject(Domain.Task.Repository)
     private readonly taskRepository: TaskRepository,
     @Inject(Domain.Conversation.Repository)
@@ -70,12 +78,16 @@ export class CallbackHandler {
     try {
       toast = await this.dispatch(ctx, data);
     } catch (error) {
-      console.error('Failed to handle callback:', error);
+      this.logger.error('Failed to handle callback', error);
       toast = '❌ Action failed';
     }
     await ctx
       .answerCallbackQuery(toast ? { text: toast } : {})
       .catch(() => undefined);
+    // Most taps change a task; the agenda decides whether anything moved.
+    if (ctx.from && data !== 'noop' && !data.startsWith(LIST_CALLBACK_PREFIX)) {
+      this.pinnedAgenda.refreshSoon({ telegramUserId: ctx.from.id });
+    }
   }
 
   private async dispatch(ctx: Context, data: string): Promise<Toast> {
@@ -87,9 +99,17 @@ export class CallbackHandler {
     if (data.startsWith('ans:')) return this.handleAnswer(ctx, data);
     if (data === 'noop') return '';
     if (data.startsWith('fwd:')) return this.handleForwardWhen(ctx, data);
-    if (data.startsWith('tz:')) return this.handleTimezone(ctx, data);
+    if (data.startsWith(REVIEW_UNDO_PREFIX))
+      return this.handleReviewUndo(ctx, data);
     if (data.startsWith('rv:')) return this.handleReview(ctx, data);
     if (data === 'brief:overdue') return this.handleBriefOverdue(ctx);
+    if (data.startsWith(LIST_CALLBACK_PREFIX)) {
+      await this.commands.showList(
+        ctx,
+        data.slice(LIST_CALLBACK_PREFIX.length),
+      );
+      return '';
+    }
     return '🤔 Unknown action';
   }
 
@@ -268,22 +288,6 @@ export class CallbackHandler {
     return '📌 Saving…';
   }
 
-  private async handleTimezone(ctx: Context, data: string): Promise<Toast> {
-    if (ctx.from === undefined) return '❌ Action failed';
-
-    const timezone = data.replace('tz:', '');
-    const user = await this.ensureUserUsecase.execute(
-      toEnsureUserInput(ctx.from),
-    );
-    await this.updateTimezoneUsecase.execute({ userId: user.id, timezone });
-
-    await this.edit(
-      ctx,
-      `✅ <b>Timezone updated!</b>\n\n🕐 New timezone: ${escapeHtml(timezone)}`,
-    );
-    return '✅ Timezone updated!';
-  }
-
   /** A row button (or "all") on the evening review: act, then redraw the message. */
   private async handleReview(ctx: Context, data: string): Promise<Toast> {
     const messageId = ctx.callbackQuery?.message?.message_id;
@@ -319,9 +323,6 @@ export class CallbackHandler {
     if (result === undefined) return '🤔 Unknown action';
     if (result === null) return '⌛ That review is no longer available';
 
-    const reply = presentReview(result.review);
-    await this.edit(ctx, reply.html, reply.keyboard);
-    if (!result.changed) return '👌 Already sorted';
     const toasts: Record<string, string> = {
       done: '✅ Done',
       tmr: '⏭ Moved to tomorrow 09:00',
@@ -329,7 +330,48 @@ export class CallbackHandler {
       skip: '⏩ Skipped this time',
       all: '⏭ All moved to tomorrow 09:00',
     };
-    return toasts[code] ?? '👌';
+    const toast = toasts[code] ?? '👌';
+    const reply = presentReview(
+      result.review,
+      new Date(),
+      result.changed && result.undoId
+        ? { id: result.undoId, label: toast.replace(/^\S+\s/, '') }
+        : null,
+    );
+    await this.edit(ctx, reply.html, reply.keyboard);
+    if (!result.changed) return '👌 Already sorted';
+    return toast;
+  }
+
+  /** The Undo row under a review: restore the task(s) and reopen their rows. */
+  private async handleReviewUndo(ctx: Context, data: string): Promise<Toast> {
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (!ctx.from || messageId === undefined) return '❌ Action failed';
+    const chatId = ctx.chat?.id ?? ctx.from.id;
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
+    );
+    const result = await this.undoAction.execute({
+      undoId: data.slice(REVIEW_UNDO_PREFIX.length),
+      chatId,
+      userId: user.id,
+    });
+    const review = result.undone
+      ? await this.conversations.reopenReviewItems(
+          chatId,
+          messageId,
+          result.taskIds,
+        )
+      : await this.conversations.getReview(chatId, messageId);
+    if (review) {
+      const reply = presentReview(review);
+      await this.edit(ctx, reply.html, reply.keyboard);
+    } else {
+      await ignoreNotModified(
+        ctx.editMessageReplyMarkup({ reply_markup: undefined }),
+      );
+    }
+    return result.undone ? '↩ Undone' : '⌛ Too late to undo that';
   }
 
   /** The brief's "Move overdue to today". */
@@ -375,7 +417,7 @@ export class CallbackHandler {
         kind: 'confirmation',
       })
       .catch((error: unknown) =>
-        console.error('Failed to link moved tasks:', error),
+        this.logger.error('Failed to link moved tasks', error),
       );
     return `⏭ Moved ${result.tasks.length} to today`;
   }
