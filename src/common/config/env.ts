@@ -113,8 +113,47 @@ export const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .optional(),
+
+    /**
+     * How Telegram updates arrive. `polling` (default) needs no public URL;
+     * `webhook` makes Telegram POST updates to WEBHOOK_URL, which this
+     * process serves itself (the URL's path is the route).
+     */
+    BOT_MODE: z.enum(['polling', 'webhook']).default('polling'),
+    /** Webhook mode: the public https URL Telegram calls, e.g. https://remy.example.com/telegram/webhook */
+    WEBHOOK_URL: z
+      .string()
+      .url()
+      .refine((u) => u.startsWith('https://'), 'must be an https URL')
+      .refine(
+        (u) => new URL(u).pathname !== '/',
+        'must have a path, e.g. https://remy.example.com/telegram/webhook',
+      )
+      .optional(),
+    /**
+     * Webhook mode: sent by Telegram as X-Telegram-Bot-Api-Secret-Token and
+     * checked on every update. Telegram allows 1-256 chars of A-Z a-z 0-9 _ -.
+     */
+    WEBHOOK_SECRET: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9_-]{1,256}$/,
+        'must be 1-256 characters of A-Z, a-z, 0-9, _ or -',
+      )
+      .optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.BOT_MODE === 'webhook') {
+      for (const key of ['WEBHOOK_URL', 'WEBHOOK_SECRET'] as const) {
+        if (env[key] === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: 'is required when BOT_MODE=webhook',
+          });
+        }
+      }
+    }
     if (env.NODE_ENV !== 'production') return;
     if (env.DEV_ALLOW_MOCK_INITDATA) {
       ctx.addIssue({

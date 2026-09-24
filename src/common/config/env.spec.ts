@@ -18,6 +18,8 @@ describe('loadEnv', () => {
     expect(env.CORS_ORIGINS).toEqual([]);
     expect(env.OWNER_TELEGRAM_ID).toBeUndefined();
     expect(env.DEV_ALLOW_MOCK_INITDATA).toBe(false);
+    expect(env.BOT_MODE).toBe('polling');
+    expect(env.WEBHOOK_URL).toBeUndefined();
   });
 
   it('coerces numbers, booleans and CSV lists', () => {
@@ -102,5 +104,44 @@ describe('loadEnv', () => {
         /JWT_EXPIRES_IN/,
       );
     }
+  });
+
+  describe('BOT_MODE', () => {
+    const webhook = {
+      ...valid,
+      BOT_MODE: 'webhook',
+      WEBHOOK_URL: 'https://remy.example.com/telegram/webhook',
+      WEBHOOK_SECRET: 'a-Z_0-9',
+    };
+
+    it('accepts a complete webhook configuration', () => {
+      const env = loadEnv(webhook);
+      expect(env.BOT_MODE).toBe('webhook');
+      expect(env.WEBHOOK_URL).toBe('https://remy.example.com/telegram/webhook');
+      expect(env.WEBHOOK_SECRET).toBe('a-Z_0-9');
+    });
+
+    it('requires WEBHOOK_URL and WEBHOOK_SECRET in webhook mode, not in polling', () => {
+      expect(() => loadEnv({ ...valid, BOT_MODE: 'webhook' })).toThrow(
+        /WEBHOOK_URL: is required when BOT_MODE=webhook[\s\S]*WEBHOOK_SECRET: is required when BOT_MODE=webhook/,
+      );
+      expect(() => loadEnv({ ...valid, BOT_MODE: 'polling' })).not.toThrow();
+      expect(() => loadEnv({ ...valid, BOT_MODE: 'push' })).toThrow(/BOT_MODE/);
+    });
+
+    it('insists on an https URL with a path and a Telegram-safe secret', () => {
+      expect(() =>
+        loadEnv({ ...webhook, WEBHOOK_URL: 'http://remy.example.com/hook' }),
+      ).toThrow(/WEBHOOK_URL: must be an https URL/);
+      expect(() =>
+        loadEnv({ ...webhook, WEBHOOK_URL: 'https://remy.example.com' }),
+      ).toThrow(/WEBHOOK_URL: must have a path/);
+      expect(() =>
+        loadEnv({ ...webhook, WEBHOOK_SECRET: 'has spaces' }),
+      ).toThrow(/WEBHOOK_SECRET: must be 1-256 characters/);
+      expect(() =>
+        loadEnv({ ...webhook, WEBHOOK_SECRET: 'x'.repeat(257) }),
+      ).toThrow(/WEBHOOK_SECRET/);
+    });
   });
 });
