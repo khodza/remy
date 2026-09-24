@@ -33,7 +33,7 @@ export class DigestBuilder {
   ): Promise<MorningBrief> {
     const { start, end } = dayBoundsInZone(now, timezone);
     const pending = { userId: user.id, statuses: [TaskStatus.Pending] };
-    const [today, overdue, inbox] = await Promise.all([
+    const [today, overdue, inbox, undelivered] = await Promise.all([
       this.tasks.find({
         ...pending,
         kind: 'reminder',
@@ -48,6 +48,7 @@ export class DigestBuilder {
         sort: 'dueAt',
       }),
       this.tasks.find({ ...pending, kind: 'todo', sort: 'createdAtDesc' }),
+      this.tasks.find({ ...pending, deliveryFailed: true, sort: 'dueAt' }),
     ]);
     return {
       kind: 'brief',
@@ -57,6 +58,7 @@ export class DigestBuilder {
       firstName: user.firstName,
       today,
       overdue,
+      undelivered,
       inbox: inbox.slice(0, INBOX_PREVIEW),
       inboxCount: inbox.length,
       scheduled,

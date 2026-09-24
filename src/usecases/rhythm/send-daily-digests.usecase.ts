@@ -4,6 +4,7 @@ import type { ConversationRepository } from '@domain/conversation';
 import type { NotificationGateway } from '@domain/notification/gateway';
 import { NotificationFailedError } from '@domain/notification/errors';
 import type { DigestKind } from '@domain/rhythm';
+import type { TaskRepository } from '@domain/task/repository';
 import type { User, UserRepository } from '@domain/user';
 import { Domain } from '@common/tokens';
 import { getEnv } from '@common/config';
@@ -28,6 +29,8 @@ export class SendDailyDigestsUsecase {
     private readonly notifications: NotificationGateway,
     @Inject(Domain.Conversation.Repository)
     private readonly conversations: ConversationRepository,
+    @Inject(Domain.Task.Repository)
+    private readonly tasks: TaskRepository,
     private readonly builder: DigestBuilder,
   ) {}
 
@@ -106,6 +109,12 @@ export class SendDailyDigestsUsecase {
           taskIds: briefTaskIds(brief),
           kind: 'agenda',
         });
+      }
+      // Reported once: a failed delivery is not news the next morning too.
+      for (const task of brief.undelivered) {
+        await this.tasks
+          .update({ id: task.id, deliveryFailedAt: null })
+          .catch(() => undefined);
       }
       return true;
     }

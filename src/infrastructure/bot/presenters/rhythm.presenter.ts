@@ -73,6 +73,17 @@ export function presentBrief(brief: MorningBrief): BotReply {
     }
   }
 
+  if (brief.undelivered.length > 0) {
+    const names = brief.undelivered.map(
+      (t) =>
+        `${escapeHtml(truncate(t.description, INBOX_NAME_MAX))} (${time(t, tz, 'EEE HH:mm')})`,
+    );
+    lines.push(
+      '',
+      `⚠️ <b>Could not be delivered</b> · ${brief.undelivered.length}: ${names.join(', ')}. Telegram did not take the reminder after several tries; give it a new time if it still matters.`,
+    );
+  }
+
   if (brief.inboxCount > 0) {
     const names = brief.inbox.map((t) =>
       escapeHtml(truncate(t.description, INBOX_NAME_MAX)),

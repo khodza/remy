@@ -12,6 +12,11 @@ export type MorningBrief = {
   today: Task[];
   /** Pending reminders due before today. */
   overdue: Task[];
+  /**
+   * Reminders whose every delivery attempt failed since the last brief.
+   * Shown once, then the mark is cleared.
+   */
+  undelivered: Task[];
   /** The newest few todos without a date. */
   inbox: Task[];
   inboxCount: number;

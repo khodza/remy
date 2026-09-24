@@ -34,6 +34,8 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     nextFireAt:
       scheduledAt === null ? null : (overrides.snoozedUntil ?? scheduledAt),
     nextAttemptAt: null,
+    reminderAttempts: 0,
+    deliveryFailedAt: null,
     leadMinutes: null,
     leadSentFor: null,
     nudgeAt: null,
@@ -69,6 +71,7 @@ export function mockTaskRepository(): jest.Mocked<TaskRepository> {
     deleteAllForUser: jest.fn().mockResolvedValue(0),
     claimDueReminder: jest.fn().mockResolvedValue(null),
     releaseReminderClaim: jest.fn().mockResolvedValue(undefined),
+    markDeliveryFailed: jest.fn().mockResolvedValue(undefined),
     findOverdueRecurring: jest.fn().mockResolvedValue([]),
     update: jest.fn(),
     delete: jest.fn(),

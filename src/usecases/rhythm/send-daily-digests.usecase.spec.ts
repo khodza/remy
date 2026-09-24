@@ -85,6 +85,7 @@ describe('SendDailyDigestsUsecase', () => {
       users,
       notifications,
       conversations,
+      tasks,
       new DigestBuilder(tasks),
     );
     return { tasks, users, conversations, notifications, usecase };
@@ -128,6 +129,31 @@ describe('SendDailyDigestsUsecase', () => {
       messageId: 700,
       taskIds: ['today', 'old'],
       kind: 'agenda',
+    });
+  });
+
+  it('a reminder that could not be delivered is reported in the brief once', async () => {
+    const { tasks, notifications, usecase } = setup();
+    const failed = makeTask({
+      id: 'failed',
+      scheduledAt: new Date('2026-09-16T20:00:00Z'),
+      deliveryFailedAt: new Date('2026-09-16T21:00:00Z'),
+    });
+    tasks.find
+      .mockResolvedValueOnce([]) // today
+      .mockResolvedValueOnce([failed]) // overdue
+      .mockResolvedValueOnce([]) // inbox
+      .mockResolvedValueOnce([failed]); // undelivered
+    tasks.update.mockResolvedValue(failed);
+
+    await usecase.execute(at0800);
+    expect(notifications.sendDigest.mock.calls[0]![0]).toMatchObject({
+      kind: 'brief',
+      undelivered: [failed],
+    });
+    expect(tasks.update).toHaveBeenCalledWith({
+      id: 'failed',
+      deliveryFailedAt: null,
     });
   });
 

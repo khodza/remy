@@ -63,6 +63,8 @@ export const TaskSchema = new Schema<TaskDocument>(
     snoozed_until: { type: Date, required: false, default: null },
     next_fire_at: { type: Date, required: false, default: null },
     next_attempt_at: { type: Date, required: false, default: null },
+    reminder_attempts: { type: Number, default: 0 },
+    delivery_failed_at: { type: Date, default: null },
     lead_minutes: { type: Number, default: null, min: 1 },
     lead_sent_for: { type: Date, default: null },
     due_at: { type: Date, default: null },

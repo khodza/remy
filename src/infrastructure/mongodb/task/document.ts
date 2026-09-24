@@ -39,6 +39,8 @@ export type TaskDocument = {
   snoozed_until?: Date | null;
   next_fire_at?: Date | null;
   next_attempt_at?: Date | null;
+  reminder_attempts?: number;
+  delivery_failed_at?: Date | null;
   lead_minutes?: number | null;
   lead_sent_for?: Date | null;
   /** snoozed_until ?? scheduled_at, stored for the view queries. */

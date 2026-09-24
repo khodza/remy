@@ -192,6 +192,8 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
           leadSentFor: null,
         }),
         next_attempt_at: null,
+        reminder_attempts: 0,
+        delivery_failed_at: null,
         lead_minutes: params.leadMinutes ?? null,
         lead_sent_for: null,
         due_at: params.scheduledAt,
@@ -256,6 +258,9 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       query['completed_at'] = { $gte: filter.completedAtOrAfter };
     }
     if (filter.list !== undefined) query['list'] = filter.list;
+    if (filter.deliveryFailed === true) {
+      query['delivery_failed_at'] = { $ne: null };
+    }
     const words = (filter.search ?? []).filter((w) => w.trim() !== '');
     if (words.length > 0) {
       // Every word somewhere in the title, the notes or the list name.
@@ -364,6 +369,7 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
     id: string,
     previousLastSentAt: Date | undefined,
     nextAttemptAt: Date,
+    options: { countAttempt?: boolean } = {},
   ): Promise<void> {
     await this.model.updateOne(
       { _id: id },
@@ -372,6 +378,19 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
           last_sent_at: previousLastSentAt ?? null,
           next_attempt_at: nextAttemptAt,
         },
+        ...(options.countAttempt ? { $inc: { reminder_attempts: 1 } } : {}),
+      },
+    );
+  }
+
+  public async markDeliveryFailed(id: string, at: Date): Promise<void> {
+    // last_sent_at stays at the claim, so the task is not claimed again
+    // for this fire time; a new time clears everything (see update()).
+    await this.model.updateOne(
+      { _id: id },
+      {
+        $set: { delivery_failed_at: at, next_attempt_at: null },
+        $inc: { reminder_attempts: 1 },
       },
     );
   }
@@ -399,6 +418,10 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
         set['snoozed_until'] = params.snoozedUntil;
       if (params.nextAttemptAt !== undefined)
         set['next_attempt_at'] = params.nextAttemptAt;
+      if (params.reminderAttempts !== undefined)
+        set['reminder_attempts'] = params.reminderAttempts;
+      if (params.deliveryFailedAt !== undefined)
+        set['delivery_failed_at'] = params.deliveryFailedAt;
       if (params.leadMinutes !== undefined)
         set['lead_minutes'] = params.leadMinutes;
       if (params.leadSentFor !== undefined)
@@ -432,6 +455,13 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       if (timeChanged && params.nudgeAt === undefined) {
         set['nudge_at'] = null;
         set['nudge_count'] = 0;
+      }
+      // …and a fresh delivery: the retry count and a failed-delivery mark
+      // belonged to the old fire time.
+      if (timeChanged) {
+        if (params.reminderAttempts === undefined) set['reminder_attempts'] = 0;
+        if (params.deliveryFailedAt === undefined)
+          set['delivery_failed_at'] = null;
       }
 
       // The document as it is now, read once and only when a derived field
@@ -582,6 +612,8 @@ export class TaskRepositoryImpl implements TaskRepository, OnModuleInit {
       snoozedUntil,
       nextFireAt,
       nextAttemptAt: document.next_attempt_at ?? null,
+      reminderAttempts: document.reminder_attempts ?? 0,
+      deliveryFailedAt: document.delivery_failed_at ?? null,
       leadMinutes: document.lead_minutes ?? null,
       leadSentFor: document.lead_sent_for ?? null,
       nudgeAt: document.nudge_at ?? null,

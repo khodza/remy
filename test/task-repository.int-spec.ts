@@ -170,6 +170,50 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
       expect(retried?.task.id).toBe(task.id);
     });
 
+    it('counts retries, gives up after the cap, and a new time starts over', async () => {
+      const task = await repo.create(params());
+      const claim = await repo.claimDueReminder(now);
+      await repo.releaseReminderClaim(
+        task.id,
+        claim?.previousLastSentAt,
+        new Date('2026-04-16T12:02:00Z'),
+        { countAttempt: true },
+      );
+      expect((await repo.findById(task.id))?.reminderAttempts).toBe(1);
+
+      // The last attempt fails: the claim is kept and the task is flagged.
+      const retryAt = new Date('2026-04-16T12:02:00Z');
+      expect((await repo.claimDueReminder(retryAt))?.task.id).toBe(task.id);
+      await repo.markDeliveryFailed(task.id, retryAt);
+      const failed = await repo.findById(task.id);
+      expect(failed).toMatchObject({
+        reminderAttempts: 2,
+        deliveryFailedAt: retryAt,
+        nextAttemptAt: null,
+      });
+      expect(
+        await repo.claimDueReminder(new Date('2026-04-16T13:00:00Z')),
+      ).toBeNull();
+      expect(
+        (
+          await repo.find({
+            userId: 'user-1',
+            statuses: [TaskStatus.Pending],
+            deliveryFailed: true,
+            sort: 'dueAt',
+          })
+        ).map((t) => t.id),
+      ).toEqual([task.id]);
+
+      // A new time is a fresh delivery: claimable again, counters cleared.
+      await repo.update({ id: task.id, scheduledAt: future });
+      expect(await repo.findById(task.id)).toMatchObject({
+        reminderAttempts: 0,
+        deliveryFailedAt: null,
+      });
+      expect((await repo.claimDueReminder(future))?.task.id).toBe(task.id);
+    });
+
     it('ignores completed and deleted tasks', async () => {
       const a = await repo.create(params());
       const b = await repo.create(params());

@@ -14,8 +14,13 @@ import { isInQuietHours, quietHoursEnd } from '@common/quiet-hours';
 import { computeLatestOccurrence } from '@common/recurrence';
 import { SendPendingRemindersOutput } from './types';
 
-/** How long to hold a task after a transient send failure. */
-const RETRY_DELAY_MINUTES = 2;
+/**
+ * Holds after the 1st, 2nd, … transient send failure of one fire time.
+ * After the last one the task is marked failed-to-deliver instead of being
+ * retried forever; the next morning brief says so.
+ */
+export const RETRY_BACKOFF_MINUTES = [2, 4, 8, 16, 32] as const;
+export const MAX_DELIVERY_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
 /** Safety valve so one run can't loop forever if claims never stop. */
 const MAX_SENDS_PER_RUN = 500;
 
@@ -116,6 +121,12 @@ export class SendPendingRemindersUsecase {
         });
         sentCount++;
 
+        if (task.reminderAttempts > 0) {
+          // Delivered after retries: the next fire time starts clean.
+          await this.taskRepository
+            .update({ id: task.id, reminderAttempts: 0 })
+            .catch(() => undefined);
+        }
         await this.scheduleNextNudge(task, ping, owner.settings, now);
 
         // Lets "in 2 hours" as a reply to this reminder find its task.
@@ -139,23 +150,31 @@ export class SendPendingRemindersUsecase {
         failedCount++;
 
         // Permanent failures (blocked bot, chat gone) keep the claim so we
-        // don't retry every minute. Transient ones release it with a short
-        // hold so the next run tries again.
+        // don't retry every minute. Transient ones release it with a hold
+        // that doubles each time; after the last attempt the task is marked
+        // failed-to-deliver (claim kept) and the morning brief lists it.
         if (error instanceof NotificationFailedError && error.permanent) {
           continue;
         }
-        await this.taskRepository
-          .releaseReminderClaim(
-            task.id,
-            previousLastSentAt,
-            addMinutes(now, RETRY_DELAY_MINUTES),
-          )
-          .catch((releaseError: unknown) => {
-            console.error(
-              `Failed to release claim on task ${task.id}:`,
-              releaseError,
+        const attempt = task.reminderAttempts + 1;
+        const hold = RETRY_BACKOFF_MINUTES[attempt - 1];
+        try {
+          if (hold === undefined || attempt >= MAX_DELIVERY_ATTEMPTS) {
+            await this.taskRepository.markDeliveryFailed(task.id, now);
+          } else {
+            await this.taskRepository.releaseReminderClaim(
+              task.id,
+              previousLastSentAt,
+              addMinutes(now, hold),
+              { countAttempt: true },
             );
-          });
+          }
+        } catch (releaseError) {
+          console.error(
+            `Failed to release claim on task ${task.id}:`,
+            releaseError,
+          );
+        }
       }
     }
 

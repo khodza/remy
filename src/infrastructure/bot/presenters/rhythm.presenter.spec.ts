@@ -40,6 +40,7 @@ describe('presentBrief', () => {
     ],
     inbox: [makeTask({ description: 'Buy headphones', scheduledAt: null })],
     inboxCount: 4,
+    undelivered: [],
     scheduled: true,
   };
 
@@ -57,6 +58,21 @@ describe('presentBrief', () => {
       '📥 <b>Inbox</b> · 4 without a date: Buy headphones, …',
     );
     expect(buttons(reply)).toEqual([['⏭ Move overdue to today']]);
+  });
+
+  it('names reminders that could not be delivered, with their time', () => {
+    const reply = presentBrief({
+      ...brief,
+      undelivered: [
+        makeTask({
+          description: 'Call the bank <now>',
+          scheduledAt: new Date('2026-09-16T13:00:00Z'), // Wed 18:00 local
+        }),
+      ],
+    });
+    expect(reply.html).toContain(
+      '⚠️ <b>Could not be delivered</b> · 1: Call the bank &lt;now&gt; (Wed 18:00)',
+    );
   });
 
   it('an empty day says so, without the move button or the reply hint', () => {

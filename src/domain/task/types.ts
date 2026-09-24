@@ -104,6 +104,18 @@ export type Task = {
   nextFireAt: Date | null;
   /** Earliest time the scheduler may retry after a transient send failure. */
   nextAttemptAt: Date | null;
+  /**
+   * Failed delivery attempts for the current fire time. Each one waits
+   * longer than the last (2, 4, 8, 16, 32 min); after the cap the task is
+   * marked failed-to-deliver instead of being retried forever. Reset by a
+   * successful send and by any new time.
+   */
+  reminderAttempts: number;
+  /**
+   * Set when every retry failed: the reminder was never delivered. The next
+   * morning brief lists the task, then clears this. A new time clears it too.
+   */
+  deliveryFailedAt: Date | null;
   /** Heads-up this many minutes before scheduledAt. */
   leadMinutes: number | null;
   /** The occurrence (scheduledAt) the heads-up was already sent for. */
@@ -167,6 +179,8 @@ export type UpdateTaskParams = {
   /** Explicitly null clears the snooze; undefined leaves it unchanged. */
   snoozedUntil?: Date | null;
   nextAttemptAt?: Date | null;
+  reminderAttempts?: number;
+  deliveryFailedAt?: Date | null;
   leadMinutes?: number | null;
   leadSentFor?: Date | null;
   nudgeAt?: Date | null;
@@ -205,6 +219,8 @@ export type TaskFilter = {
   completedAtOrAfter?: Date;
   /** Only tasks on this (normalised) named list. */
   list?: string;
+  /** Only tasks whose reminder could not be delivered (deliveryFailedAt set). */
+  deliveryFailed?: boolean;
   /**
    * Words that must all appear (case-insensitive, anywhere) in the title,
    * the notes or the list name.
