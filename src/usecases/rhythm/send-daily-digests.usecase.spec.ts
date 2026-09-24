@@ -80,8 +80,15 @@ describe('SendDailyDigestsUsecase', () => {
       sendDigest: jest.fn().mockResolvedValue({ messageId: 700 }),
       sendDocument: jest.fn(),
       sendSourceLink: jest.fn(),
+      sendVoice: jest.fn(),
       upsertPinnedAgenda: jest.fn(),
       removePinnedAgenda: jest.fn(),
+    };
+    const speech = {
+      synthesize: jest.fn().mockResolvedValue({
+        audio: Buffer.from('ogg'),
+        mimeType: 'audio/ogg',
+      }),
     };
     const usecase = new SendDailyDigestsUsecase(
       users,
@@ -89,8 +96,9 @@ describe('SendDailyDigestsUsecase', () => {
       conversations,
       tasks,
       new DigestBuilder(tasks),
+      speech,
     );
-    return { tasks, users, conversations, notifications, usecase };
+    return { tasks, users, conversations, notifications, speech, usecase };
   }
 
   beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}));
@@ -132,6 +140,42 @@ describe('SendDailyDigestsUsecase', () => {
       taskIds: ['today', 'old'],
       kind: 'agenda',
     });
+  });
+
+  it('voice brief: text first, then the spoken version; a TTS failure costs nothing', async () => {
+    const off = setup();
+    off.tasks.find.mockResolvedValue([]);
+    await off.usecase.execute(at0800);
+    expect(off.speech.synthesize).not.toHaveBeenCalled();
+
+    const on = setup(user({ voiceBrief: true }));
+    on.tasks.find.mockResolvedValue([]);
+    on.tasks.find.mockResolvedValueOnce([
+      makeTask({
+        description: 'Standup',
+        scheduledAt: new Date('2026-09-17T04:30:00Z'),
+      }),
+    ]);
+    expect(await on.usecase.execute(at0800)).toEqual({ sent: 1, failed: 0 });
+    expect(on.speech.synthesize).toHaveBeenCalledWith({
+      text: expect.stringContaining('At 09:30, Standup.'),
+    });
+    expect(on.notifications.sendVoice).toHaveBeenCalledWith({
+      chatId: 42,
+      audio: Buffer.from('ogg'),
+    });
+    expect(
+      on.notifications.sendDigest.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(on.notifications.sendVoice.mock.invocationCallOrder[0]!);
+
+    const broken = setup(user({ voiceBrief: true }));
+    broken.tasks.find.mockResolvedValue([]);
+    broken.speech.synthesize.mockRejectedValue(new Error('TTS down'));
+    expect(await broken.usecase.execute(at0800)).toEqual({
+      sent: 1,
+      failed: 0,
+    });
+    expect(broken.notifications.sendVoice).not.toHaveBeenCalled();
   });
 
   it('a reminder that could not be delivered is reported in the brief once', async () => {

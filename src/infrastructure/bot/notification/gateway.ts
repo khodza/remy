@@ -7,6 +7,7 @@ import {
   SendDocumentInput,
   SendReminderInput,
   SendSourceLinkInput,
+  SendVoiceInput,
   SentReminder,
 } from '@domain/notification/gateway/types';
 import {
@@ -100,6 +101,26 @@ export class NotificationGatewayImpl implements NotificationGateway {
         `Failed to send ${input.filename}`,
         error,
         { permanent },
+      );
+    }
+  }
+
+  public async sendVoice(input: SendVoiceInput): Promise<void> {
+    try {
+      await this.botService
+        .getBot()
+        .api.sendVoice(input.chatId, new InputFile(input.audio, 'brief.ogg'), {
+          ...(input.caption
+            ? { caption: input.caption, parse_mode: 'HTML' }
+            : {}),
+        });
+    } catch (error) {
+      throw new NotificationFailedError(
+        'Failed to send the voice message',
+        error,
+        {
+          permanent: isPermanent(error),
+        },
       );
     }
   }

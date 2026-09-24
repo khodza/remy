@@ -53,6 +53,9 @@ describe('Remy API (e2e)', () => {
       message_id: ++messageSeq,
     }),
   );
+  const sendVoice = jest.fn(async (_chatId: number, _file: unknown) => ({
+    message_id: ++messageSeq,
+  }));
   // The pinned agenda edits, pins and unpins.
   const editMessageText = jest.fn(async () => true);
   const pinChatMessage = jest.fn(async () => true);
@@ -126,6 +129,7 @@ describe('Remy API (e2e)', () => {
           api: {
             sendMessage,
             sendDocument,
+            sendVoice,
             editMessageText,
             pinChatMessage,
             unpinChatMessage,
@@ -136,6 +140,14 @@ describe('Remy API (e2e)', () => {
       .overrideProvider(Domain.Assistant.InterpreterGateway)
       .useValue({ interpret })
       // The "recording" is its own transcript.
+      // The spoken brief: the "audio" is the text it was asked to read.
+      .overrideProvider(Domain.AI.SpeechGateway)
+      .useValue({
+        synthesize: async (input: { text: string }) => ({
+          audio: Buffer.from(input.text, 'utf8'),
+          mimeType: 'audio/ogg',
+        }),
+      })
       .overrideProvider(Domain.AI.TranscriptionGateway)
       .useValue({
         transcribe: async (input: { audioFileBuffer: Buffer }) => ({
@@ -691,6 +703,13 @@ describe('Remy API (e2e)', () => {
       String(c[1]).includes('Good morning'),
     );
     expect(brief?.[1]).toContain('Water the plants');
+    // voiceBrief was switched on in the settings test: the brief is also
+    // read aloud, after the text.
+    expect(sendVoice).toHaveBeenCalledTimes(1);
+    const voice = sendVoice.mock.calls[0]![1] as { fileData: Buffer };
+    expect(voice.fileData.toString('utf8')).toMatch(
+      /^Good morning, .*Water the plants/,
+    );
     expect((await digests.execute()).sent).toBe(0); // once per local day
   });
   it('pinned agenda: drawn and pinned when turned on, redrawn on the tick after a change, taken down when turned off', async () => {

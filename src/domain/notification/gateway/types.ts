@@ -23,6 +23,14 @@ export type SendReminderInput = {
   sourceQuote?: { text: string; from: string | null } | null;
 };
 
+/** A voice message (OGG/Opus) in the chat, e.g. the spoken brief. */
+export type SendVoiceInput = {
+  chatId: number;
+  audio: Buffer;
+  /** Short HTML caption under the bubble. */
+  caption?: string;
+};
+
 /** A text file sent to the chat as a document (exports). */
 export type SendDocumentInput = {
   chatId: number;

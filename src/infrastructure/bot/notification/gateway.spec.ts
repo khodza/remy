@@ -128,6 +128,26 @@ describe('NotificationGatewayImpl', () => {
     expect((error as NotificationFailedError).permanent).toBe(false);
   });
 
+  it('sends a voice message as an OGG file, failures wrapped like any send', async () => {
+    const sendVoice = jest.fn().mockResolvedValue({ message_id: 5 });
+    gateway = new NotificationGatewayImpl({
+      getBot: () => ({ api: { sendVoice } }),
+    } as unknown as TelegramBotService);
+    await gateway.sendVoice({ chatId: 12345, audio: Buffer.from('ogg') });
+    expect(sendVoice).toHaveBeenCalledWith(
+      12345,
+      expect.objectContaining({ filename: 'brief.ogg' }),
+      {},
+    );
+
+    sendVoice.mockRejectedValueOnce(
+      telegramError(403, 'Forbidden: bot was blocked'),
+    );
+    await expect(
+      gateway.sendVoice({ chatId: 12345, audio: Buffer.from('ogg') }),
+    ).rejects.toMatchObject({ permanent: true });
+  });
+
   describe('pinned agenda', () => {
     const agenda = {
       chatId: 12345,

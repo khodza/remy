@@ -48,6 +48,7 @@ describe('SendPendingRemindersUsecase', () => {
       sendDigest: jest.fn(),
       sendDocument: jest.fn(),
       sendSourceLink: jest.fn(),
+      sendVoice: jest.fn(),
       upsertPinnedAgenda: jest.fn(),
       removePinnedAgenda: jest.fn(),
     };

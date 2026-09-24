@@ -23,6 +23,7 @@ function notificationsMock(): jest.Mocked<NotificationGateway> {
     sendDigest: jest.fn(),
     sendDocument: jest.fn(),
     sendSourceLink: jest.fn(),
+    sendVoice: jest.fn(),
     upsertPinnedAgenda: jest.fn(async (_agenda, messageId) => ({
       messageId: messageId ?? 500,
     })),

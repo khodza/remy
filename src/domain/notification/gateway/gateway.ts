@@ -3,6 +3,7 @@ import {
   SendDocumentInput,
   SendReminderInput,
   SendSourceLinkInput,
+  SendVoiceInput,
   SentReminder,
 } from './types';
 
@@ -12,6 +13,8 @@ export interface NotificationGateway {
   sendDigest(digest: Digest): Promise<SentReminder>;
   /** A file in the chat, e.g. an export. */
   sendDocument(input: SendDocumentInput): Promise<void>;
+  /** A voice message, e.g. the spoken morning brief. */
+  sendVoice(input: SendVoiceInput): Promise<void>;
   /**
    * Replies in the chat to the message a task came from. Throws
    * SourceMessageGoneError when that message no longer exists.
