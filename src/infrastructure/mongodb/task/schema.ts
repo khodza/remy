@@ -66,6 +66,7 @@ export const TaskSchema = new Schema<TaskDocument>(
     lead_minutes: { type: Number, default: null, min: 1 },
     lead_sent_for: { type: Date, default: null },
     due_at: { type: Date, default: null },
+    rollover_at: { type: Date, default: null },
     nudge_at: { type: Date, default: null },
     nudge_count: { type: Number, default: 0 },
     snooze_count: { type: Number, default: 0 },
@@ -98,7 +99,9 @@ export const TaskSchema = new Schema<TaskDocument>(
 
 // The scheduler's claim query.
 TaskSchema.index({ status: 1, next_fire_at: 1 });
-// Still used by findOverdueRecurring.
+// The rollover scan: only recurring tasks whose next cycle has arrived.
+TaskSchema.index({ status: 1, rollover_at: 1 });
+// findByUserId sorts on scheduled_at.
 TaskSchema.index({ status: 1, scheduled_at: 1 });
 // Mini App views and chat queries filter on the due time, not on the
 // scheduler's internal fire time (a heads-up or a nudge).

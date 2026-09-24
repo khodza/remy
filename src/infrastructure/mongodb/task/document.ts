@@ -43,6 +43,12 @@ export type TaskDocument = {
   lead_sent_for?: Date | null;
   /** snoozed_until ?? scheduled_at, stored for the view queries. */
   due_at?: Date | null;
+  /**
+   * Recurring tasks: when the occurrence after scheduled_at arrives, i.e.
+   * when an ignored task must be rolled onto its next cycle. Null for
+   * one-offs and for the last occurrence of a series (common/recurrence.ts).
+   */
+  rollover_at?: Date | null;
   nudge_at?: Date | null;
   nudge_count?: number;
   snooze_count?: number;

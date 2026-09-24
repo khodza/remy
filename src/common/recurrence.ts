@@ -20,11 +20,16 @@ import { Recurrence } from '@domain/task';
  * short month (which is what `anchorAt` is for).
  */
 
+/** Most cycles one call walks; past this the series is treated as ended. */
+const MAX_CATCH_UP_STEPS = 1000;
+
 /**
  * Next occurrence strictly after `now`, or null when the series has ended
- * (`until`). If the task fell behind by many cycles we advance until future
- * — otherwise a recurring reminder that fell behind would stay forever
- * overdue and keep firing reminders.
+ * (`until`, `count`). If the task fell behind by many cycles we advance
+ * until future — otherwise a recurring reminder that fell behind would stay
+ * forever overdue and keep firing reminders. A series more than
+ * MAX_CATCH_UP_STEPS cycles behind is reported as ended (null), never as a
+ * date in the past (B10): a past "next" would fire at once and then again.
  */
 export function computeNextOccurrence(
   current: Date,
@@ -35,14 +40,35 @@ export function computeNextOccurrence(
   const end = seriesEnd(recurrence, timezone, current);
   let next = advanceOnce(current, recurrence, timezone);
   // Cap the iteration count so a bad config can't hang the server.
-  for (let i = 0; i < 1000 && next.getTime() <= now.getTime(); i++) {
+  for (
+    let i = 0;
+    i < MAX_CATCH_UP_STEPS && next.getTime() <= now.getTime();
+    i++
+  ) {
     if (end && next.getTime() > end.getTime()) return null;
     next = advanceOnce(next, recurrence, timezone);
   }
+  if (next.getTime() <= now.getTime()) return null;
   if (end && next.getTime() > end.getTime()) {
     return null;
   }
   return next;
+}
+
+/**
+ * When the occurrence after `current` arrives (the moment the task should
+ * be rolled onto its next cycle if it was ignored), or null when `current`
+ * is the last occurrence of the series. Stored on the task so the scheduler
+ * only looks at tasks whose next cycle has actually come (B10).
+ */
+export function rolloverTimeOf(
+  current: Date,
+  recurrence: Recurrence,
+  timezone = 'UTC',
+): Date | null {
+  const end = seriesEnd(recurrence, timezone, current);
+  const next = advanceOnce(current, recurrence, timezone);
+  return end && next.getTime() > end.getTime() ? null : next;
 }
 
 /** Most occurrences a "× N times" series may have. */
@@ -98,7 +124,7 @@ export function computeLatestOccurrence(
 ): Date {
   const end = seriesEnd(recurrence, timezone, current);
   let latest = current;
-  for (let i = 0; i < 1000; i++) {
+  for (let i = 0; i < MAX_CATCH_UP_STEPS; i++) {
     const next = advanceOnce(latest, recurrence, timezone);
     if (next.getTime() > now.getTime()) break;
     if (end && next.getTime() > end.getTime()) break;

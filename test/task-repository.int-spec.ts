@@ -314,6 +314,78 @@ describe('TaskRepositoryImpl (real MongoDB)', () => {
     });
   });
 
+  describe('findOverdueRecurring (rollover scan, B10)', () => {
+    it('returns only repeating tasks whose next cycle has arrived', async () => {
+      // Daily at 10:00Z: reminded and ignored, but tomorrow's cycle is not
+      // here yet, so there is nothing to roll and it must not be scanned.
+      await repo.create(
+        params({ scheduledAt: past, recurrence: { type: 'daily' } }),
+      );
+      // Two cycles behind: the next cycle (yesterday) has passed.
+      const behind = await repo.create(
+        params({
+          scheduledAt: new Date('2026-04-14T10:00:00Z'),
+          recurrence: { type: 'daily' },
+        }),
+      );
+      // One-off in the past: never rolled.
+      await repo.create(params({ scheduledAt: past }));
+      // Last occurrence of a finished series: nothing after it.
+      await repo.create(
+        params({
+          scheduledAt: new Date('2026-04-14T10:00:00Z'),
+          recurrence: {
+            type: 'daily',
+            count: 1,
+            anchorAt: new Date('2026-04-14T10:00:00Z'),
+          },
+        }),
+      );
+
+      const found = await repo.findOverdueRecurring(now);
+      expect(found.map((t) => t.id)).toEqual([behind.id]);
+
+      // Rolling it forward moves the scan time with it.
+      await repo.update({ id: behind.id, scheduledAt: past });
+      expect(await repo.findOverdueRecurring(now)).toEqual([]);
+      expect((await model.findById(behind.id))?.rollover_at).toEqual(
+        new Date('2026-04-17T10:00:00Z'),
+      );
+    });
+
+    it('a recurrence added or removed later updates the scan time', async () => {
+      const task = await repo.create(
+        params({ scheduledAt: new Date('2026-04-14T10:00:00Z') }),
+      );
+      expect((await model.findById(task.id))?.rollover_at).toBeNull();
+      await repo.update({ id: task.id, recurrence: { type: 'daily' } });
+      expect((await repo.findOverdueRecurring(now)).map((t) => t.id)).toEqual([
+        task.id,
+      ]);
+      await repo.update({ id: task.id, recurrence: null });
+      expect(await repo.findOverdueRecurring(now)).toEqual([]);
+    });
+
+    it('is backfilled at boot for repeating tasks that predate it', async () => {
+      const legacy = await model.collection.insertOne({
+        user_id: 'user-1',
+        telegram_chat_id: 42,
+        description: 'Old daily',
+        scheduled_at: new Date('2026-04-14T10:00:00Z'),
+        timezone: 'UTC',
+        recurrence: { type: 'daily' },
+        status: 'pending',
+        created_at: past,
+        updated_at: past,
+      });
+      expect(await repo.findOverdueRecurring(now)).toEqual([]);
+      await repo.onModuleInit();
+      expect((await repo.findOverdueRecurring(now)).map((t) => t.id)).toEqual([
+        legacy.insertedId.toHexString(),
+      ]);
+    });
+  });
+
   it('backfills legacy documents at boot and reads them with sane defaults', async () => {
     const legacy = await model.collection.insertOne({
       user_id: 'user-1',
