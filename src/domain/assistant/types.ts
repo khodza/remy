@@ -28,8 +28,19 @@ export type QueryRange =
 /** What the user meant. Exactly one of these per message. */
 export type Interpretation =
   | { intent: 'create'; tasks: TaskDraft[] }
-  | { intent: 'query'; range: QueryRange; search: string | null }
-  | { intent: 'complete'; targetIds: string[] }
+  | {
+      intent: 'query';
+      range: QueryRange;
+      search: string | null;
+      /** Only tasks on this named list ("what's on my shopping list?"), raw. */
+      list: string | null;
+    }
+  | {
+      intent: 'complete';
+      targetIds: string[];
+      /** Every open task on this list as well ("clear the shopping list"). */
+      list?: string | null;
+    }
   | {
       intent: 'reschedule';
       targetIds: string[];
@@ -38,7 +49,7 @@ export type Interpretation =
       /** …or a relative shift that keeps each task's time of day. */
       shiftMinutes: number | null;
     }
-  | { intent: 'delete'; targetIds: string[] }
+  | { intent: 'delete'; targetIds: string[]; list?: string | null }
   | {
       intent: 'edit';
       targetId: string;
@@ -64,6 +75,8 @@ export type InterpreterInput = {
   candidates: CandidateTask[];
   /** Names of the user's categories. */
   categories: string[];
+  /** Names of the user's named lists ("shopping"), so "the list" resolves. */
+  lists?: string[];
   /** Tasks the message the user replied to is about ("make it 11"). */
   replyToTaskIds: string[];
   /** Tasks Remy last touched: what "it" refers to without a reply. */

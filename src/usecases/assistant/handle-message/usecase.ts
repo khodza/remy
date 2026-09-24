@@ -14,6 +14,7 @@ import {
 import { Domain } from '@common/tokens';
 import { dayBoundsInZone } from '@common/day-bounds';
 import { effectiveDueAt } from '@common/fire-time';
+import { normaliseListName } from '@common/list-name';
 import { ListCategoriesUsecase } from '../../category/list-categories';
 import { MarkCompleteUsecase } from '../../task/mark-complete';
 import { DeleteTaskUsecase } from '../../task/delete-task';
@@ -90,8 +91,8 @@ export class HandleMessageUsecase {
 
   public async execute(input: HandleMessageInput): Promise<AssistantResult> {
     const now = new Date();
-    const [state, dated, todos, categories, replyToTaskIds] = await Promise.all(
-      [
+    const [state, dated, todos, categories, lists, replyToTaskIds] =
+      await Promise.all([
         this.conversations.getState(input.chatId),
         this.tasks.find({
           userId: input.userId,
@@ -108,14 +109,14 @@ export class HandleMessageUsecase {
           limit: MAX_TODO_CANDIDATES,
         }),
         this.listCategories.execute({ userId: input.userId }),
+        this.tasks.listSummaries(input.userId),
         input.replyToMessageId !== undefined
           ? this.conversations.findLinkedTaskIds(
               input.chatId,
               input.replyToMessageId,
             )
           : Promise.resolve([]),
-      ],
-    );
+      ]);
 
     // A tapped answer names its question, so it is never "too late" for it.
     const pendingQuestion =
@@ -167,6 +168,7 @@ export class HandleMessageUsecase {
         recurring: t.recurrence !== null,
       })),
       categories: categories.map((c) => c.name),
+      lists: lists.map((l) => l.name),
       replyToTaskIds,
       lastTaskIds: state.lastTaskIds,
       pendingQuestion: pendingQuestion
@@ -263,21 +265,29 @@ export class HandleMessageUsecase {
         return { kind: 'created', tasks: created, undoId };
       }
 
-      case 'query':
+      case 'query': {
+        const list = normaliseListName(interpretation.list);
         return {
           kind: 'agenda',
           range: interpretation.range,
           search: interpretation.search,
+          list,
           tasks: await this.query(
             input,
             interpretation.range,
             interpretation.search,
+            list,
             now,
           ),
         };
+      }
 
       case 'complete': {
-        const before = pick(interpretation.targetIds);
+        const before = await this.withList(
+          input,
+          pick(interpretation.targetIds),
+          interpretation.list,
+        );
         if (before.length === 0) return askWhich('Which task did you finish?');
         const undoId = await this.recordBefore(input, before, 'completed');
         const after: Task[] = [];
@@ -301,7 +311,11 @@ export class HandleMessageUsecase {
       }
 
       case 'delete': {
-        const before = pick(interpretation.targetIds);
+        const before = await this.withList(
+          input,
+          pick(interpretation.targetIds),
+          interpretation.list,
+        );
         if (before.length === 0) return askWhich('Which task should I delete?');
         const undoId = await this.recordBefore(input, before, 'deleted');
         for (const task of before)
@@ -395,6 +409,7 @@ export class HandleMessageUsecase {
       scheduledAt: draft.dueAt,
       timezone: input.timezone,
       allDay: draft.allDay === true && draft.dueAt !== null,
+      list: normaliseListName(draft.list),
       recurrence:
         draft.recurrence && draft.dueAt
           ? { ...draft.recurrence, anchorAt: draft.dueAt }
@@ -411,10 +426,28 @@ export class HandleMessageUsecase {
     });
   }
 
+  /** The picked tasks plus every open task on the named list, if any. */
+  private async withList(
+    input: HandleMessageInput,
+    picked: Task[],
+    rawList: string | null | undefined,
+  ): Promise<Task[]> {
+    const list = normaliseListName(rawList);
+    if (list === null) return picked;
+    const onList = await this.tasks.find({
+      userId: input.userId,
+      statuses: [TaskStatus.Pending],
+      list,
+      sort: 'dueAt',
+    });
+    return [...new Map([...picked, ...onList].map((t) => [t.id, t])).values()];
+  }
+
   private async query(
     input: HandleMessageInput,
     range: Extract<Interpretation, { intent: 'query' }>['range'],
     search: string | null,
+    list: string | null,
     now: Date,
   ): Promise<Task[]> {
     const { end } = dayBoundsInZone(now, input.timezone);
@@ -424,6 +457,7 @@ export class HandleMessageUsecase {
       userId: input.userId,
       statuses: pending,
       sort: 'dueAt' as const,
+      ...(list !== null ? { list } : {}),
     };
 
     let tasks: Task[];

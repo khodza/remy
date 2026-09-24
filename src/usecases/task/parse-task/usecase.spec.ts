@@ -138,7 +138,7 @@ describe('ParseTaskUsecase', () => {
     ],
     [
       'a question',
-      { intent: 'query', range: 'today', search: null },
+      { intent: 'query', range: 'today', search: null, list: null },
       /does not look like/,
     ],
   ] as const)(

@@ -113,6 +113,7 @@ describe('presentAssistantResult', () => {
         kind: 'agenda',
         range: 'week',
         search: null,
+        list: null,
         tasks: [
           makeTask({
             ...allDay,
@@ -210,6 +211,7 @@ describe('presentAssistantResult', () => {
         kind: 'agenda',
         range: 'week',
         search: null,
+        list: null,
         tasks: [
           makeTask({
             description: 'Pay bill',
@@ -241,11 +243,49 @@ describe('presentAssistantResult', () => {
 
     expect(
       presentAssistantResult(
-        { kind: 'agenda', range: 'today', search: null, tasks: [] },
+        { kind: 'agenda', range: 'today', search: null, list: null, tasks: [] },
         tz,
         now,
       ).html,
     ).toContain('Nothing here');
+  });
+
+  it('lists: the confirmation names the list, and a list agenda is titled by it', () => {
+    const milk = makeTask({
+      description: 'Milk',
+      scheduledAt: null,
+      list: 'shopping',
+    });
+    const created = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [milk] },
+      tz,
+      now,
+    );
+    expect(created.html).toContain('🗂 On your shopping list');
+    const agenda = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'all',
+        search: null,
+        list: 'shopping',
+        tasks: [milk],
+      },
+      tz,
+      now,
+    );
+    expect(agenda.html).toContain('📋 <b>🗂 Shopping list</b> · 1');
+    const empty = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'today',
+        search: null,
+        list: 'shopping',
+        tasks: [],
+      },
+      tz,
+      now,
+    );
+    expect(empty.html).toContain('🗂 Shopping list · Today');
   });
 
   it('question: options become tappable answers; chat text is escaped', () => {

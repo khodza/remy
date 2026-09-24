@@ -64,15 +64,16 @@ ${taskList}
 [LAST] = the task(s) you last created or changed: "it"/"that" means those when nothing was replied to.
 
 THE USER'S CATEGORIES: ${input.categories.length > 0 ? input.categories.join(', ') : '(none)'}
+THE USER'S NAMED LISTS: ${input.lists && input.lists.length > 0 ? input.lists.join(', ') : '(none yet)'}
 ${context.length > 0 ? `\nCONTEXT\n${context.map((c) => `- ${c}`).join('\n')}\n` : ''}
 INTENTS — choose one
-- create: the user wants to remember something. One entry in "tasks" per distinct thing ("buy milk, call mom at 5, dentist tomorrow 10" → 3 tasks). title = short imperative without "remind me to". due_local = null when no time or date is given (it becomes an Inbox todo). Pick a category only when it clearly fits one of the user's categories, else null. priority "high" only for words like urgent/important/asap. lead_minutes for "remind me 30 min before" / "3 hours before".
-- query: the user asks what they have ("what's on today?", "what do I have this week?", "anything overdue?", "show my inbox", "do I have anything about the visa?" → query_search "visa", range "all").
-- complete: the user says something is done ("done with the dentist", "finished the report", "paid the bill").
+- create: the user wants to remember something. One entry in "tasks" per distinct thing ("buy milk, call mom at 5, dentist tomorrow 10" → 3 tasks). title = short imperative without "remind me to". due_local = null when no time or date is given (it becomes an Inbox todo). Pick a category only when it clearly fits one of the user's categories, else null. priority "high" only for words like urgent/important/asap. lead_minutes for "remind me 30 min before" / "3 hours before". list = the named list an item goes on ("add milk to the shopping list" → title "Milk", list "shopping"; "ideas: learn Rust" → list "ideas"); reuse one of the user's list names when it is the same list; null when no list was named.
+- query: the user asks what they have ("what's on today?", "what do I have this week?", "anything overdue?", "show my inbox", "do I have anything about the visa?" → query_search "visa", range "all"). "what's on my shopping list?" → list "shopping", query_range null.
+- complete: the user says something is done ("done with the dentist", "finished the report", "paid the bill"). "clear the shopping list" / "got everything on the shopping list" → list "shopping" (every open item on it), targets [].
 - reschedule: move/snooze/postpone existing task(s). List ALL affected task numbers in targets. Two mutually exclusive ways to say the new time:
   (a) due_local = one absolute new time, when the user names a clock time or a duration from now ("move the dentist to 6pm", "make it 11", "in 2 hours" → in_minutes 120). Use this only when every target should land on that same time.
   (b) shift_minutes = a whole-day shift that keeps each task's own time of day, with due_local null, when the user moves things to another day without naming a clock time ("push everything today to tomorrow" → 1440, "move it to next week" → 10080, "a day earlier" → -1440). With several targets and no clock time, ALWAYS use (b).
-- delete: remove/cancel/forget task(s).
+- delete: remove/cancel/forget task(s). "delete the shopping list" → list "shopping", targets [].
 - edit: rename a task or change its notes. "rename X to Y" / "call it Y" → targets = [X], new_title = "Y" (always fill new_title with the new name). "add a note to X: Z" → new_notes = "Z". Time changes are reschedule, not edit.
 - chat: greetings, thanks, small talk, questions about what you can do. Put a short friendly answer in "reply" (1–2 sentences, plain text, in the user's language).
 - unclear: you cannot act safely. Ask ONE short question in "question" and offer up to 4 short tap-able answers in "options" (e.g. ["05:00", "17:00"]). Use this when a target is ambiguous between several tasks, when a bare hour like "at 5" could be morning or evening and both are plausible, or when the message is not understandable. Do not use it when a sensible default exists.

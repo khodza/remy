@@ -36,6 +36,7 @@ const reply = (over: Partial<AssistantModelOutput>): AssistantModelOutput => ({
   tasks: [],
   query_range: null,
   query_search: null,
+  list: null,
   targets: [],
   due_local: null,
   in_minutes: null,
@@ -57,6 +58,7 @@ const draft = (over: Partial<AssistantModelOutput['tasks'][number]>) => ({
   category: null,
   lead_minutes: null,
   notes: null,
+  list: null,
   ...over,
 });
 
@@ -95,6 +97,7 @@ describe('interpretAssistantOutput', () => {
           leadMinutes: null,
           notes: null,
           allDay: false,
+          list: null,
         },
         {
           title: 'Call mom',
@@ -105,6 +108,7 @@ describe('interpretAssistantOutput', () => {
           leadMinutes: null,
           notes: null,
           allDay: false,
+          list: null,
         },
         {
           title: 'Dentist',
@@ -115,6 +119,7 @@ describe('interpretAssistantOutput', () => {
           leadMinutes: 30,
           notes: null,
           allDay: false,
+          list: null,
         },
       ],
     });
@@ -692,18 +697,82 @@ describe('interpretAssistantOutput', () => {
     ).toBe('unclear');
   });
 
+  describe('named lists', () => {
+    it('create keeps the list name the model picked, raw', () => {
+      const r = interpretAssistantOutput(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({ title: 'milk', list: ' Shopping ' }),
+            draft({ title: 'x' }),
+          ],
+        }),
+        { ...ctx, text: 'add milk to the shopping list' },
+      );
+      if (r.intent !== 'create') throw new Error('expected create');
+      expect(r.tasks.map((t) => t.list)).toEqual(['Shopping', null]);
+    });
+
+    it('a list query browses the whole list unless a range was asked for', () => {
+      expect(
+        interpretAssistantOutput(reply({ intent: 'query', list: 'shopping' }), {
+          ...ctx,
+          text: "what's on my shopping list?",
+        }),
+      ).toEqual({
+        intent: 'query',
+        range: 'all',
+        search: null,
+        list: 'shopping',
+      });
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'query', list: 'shopping', query_range: 'today' }),
+          { ...ctx, text: 'anything from the shopping list today?' },
+        ),
+      ).toMatchObject({ range: 'today', list: 'shopping' });
+    });
+
+    it('"clear the shopping list" completes the list without numbered targets; an unnamed list asks', () => {
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'complete', list: 'shopping' }),
+          { ...ctx, text: 'clear the shopping list' },
+        ),
+      ).toEqual({ intent: 'complete', targetIds: [], list: 'shopping' });
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'delete', list: 'groceries', targets: [3] }),
+          { ...ctx, text: 'delete my groceries and the plov thing' },
+        ),
+      ).toEqual({
+        intent: 'delete',
+        targetIds: ['id-plov'],
+        list: 'groceries',
+      });
+      // The model named a list the message never mentions: not trusted.
+      expect(
+        interpretAssistantOutput(
+          reply({ intent: 'complete', list: 'shopping' }),
+          { ...ctx, text: 'all done' },
+        ),
+      ).toMatchObject({ intent: 'unclear' });
+    });
+  });
+
   it('query defaults to today; chat and unclear pass through, options capped at 4', () => {
     expect(interpretAssistantOutput(reply({ intent: 'query' }), ctx)).toEqual({
       intent: 'query',
       range: 'today',
       search: null,
+      list: null,
     });
     expect(
       interpretAssistantOutput(
         reply({ intent: 'query', query_range: 'all', query_search: ' visa ' }),
         ctx,
       ),
-    ).toEqual({ intent: 'query', range: 'all', search: 'visa' });
+    ).toEqual({ intent: 'query', range: 'all', search: 'visa', list: null });
     expect(
       interpretAssistantOutput(
         reply({ intent: 'chat', reply: 'Anytime!' }),

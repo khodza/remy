@@ -57,12 +57,14 @@ const ModelOutput = z.object({
       category: z.string().nullable(),
       lead_minutes: z.number().int().nullable(),
       notes: z.string().nullable(),
+      list: z.string().nullable(),
     }),
   ),
   query_range: z
     .enum(['today', 'tomorrow', 'week', 'overdue', 'inbox', 'all'])
     .nullable(),
   query_search: z.string().nullable(),
+  list: z.string().nullable(),
   targets: z.array(z.number().int()),
   due_local: Local,
   in_minutes: z.number().int().nullable(),
@@ -159,6 +161,11 @@ export function interpretAssistantOutput(
     question,
     options,
   });
+  // A named list the action applies to: only when the user actually named
+  // it (a word of the list name is in the message), else the model made
+  // it up and "clear the list" would empty the wrong one.
+  const list = out.list?.trim() ? out.list.trim() : null;
+  const listNamed = list !== null && mentionsList(ctx.text, list);
 
   switch (out.intent) {
     case 'create': {
@@ -225,6 +232,7 @@ export function interpretAssistantOutput(
               : null,
           notes: t.notes?.trim() ? t.notes.trim() : null,
           allDay,
+          list: t.list?.trim() ? t.list.trim() : null,
         });
       }
       if (tasks.length === 0) return FALLBACK_QUESTION;
@@ -246,14 +254,18 @@ export function interpretAssistantOutput(
     case 'query':
       return {
         intent: 'query',
-        range: out.query_range ?? 'today',
+        // A list is browsed whole unless a range was asked for.
+        range: out.query_range ?? (list ? 'all' : 'today'),
         search: out.query_search?.trim() ? out.query_search.trim() : null,
+        list,
       };
     case 'complete':
+      if (listNamed) return { intent: 'complete', targetIds, list };
       return targetIds.length > 0
         ? { intent: 'complete', targetIds }
         : ask('Which task did you finish?');
     case 'delete':
+      if (listNamed) return { intent: 'delete', targetIds, list };
       return targetIds.length > 0
         ? { intent: 'delete', targetIds }
         : ask('Which task should I delete?');
@@ -391,6 +403,16 @@ function isGrounded(ctx: InterpretContext, targetIds: string[]): boolean {
       ),
     );
   });
+}
+
+/** A word of the list name (as given or normalised) appears in the message. */
+function mentionsList(text: string, list: string): boolean {
+  const said = words(text);
+  return words(list).some((w) =>
+    said.some(
+      (u) => u.startsWith(w.slice(0, 4)) || w.startsWith(u.slice(0, 4)),
+    ),
+  );
 }
 
 function capitalise(text: string): string {

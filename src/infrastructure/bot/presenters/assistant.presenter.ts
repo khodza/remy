@@ -113,9 +113,12 @@ export function presentAssistantResult(
     }
 
     case 'agenda': {
+      const scope = result.list ? `${listTitle(result.list)} · ` : '';
       const title = result.search
-        ? `Matching “${escapeHtml(result.search)}”`
-        : RANGE_TITLES[result.range];
+        ? `${scope}Matching “${escapeHtml(result.search)}”`
+        : result.list && result.range === 'all'
+          ? listTitle(result.list)
+          : `${scope}${RANGE_TITLES[result.range]}`;
       if (result.tasks.length === 0) {
         return { html: `📭 <b>${title}</b>\n\nNothing here.` };
       }
@@ -152,7 +155,13 @@ function taskBlock(task: Task, timezone: string): string {
   if (task.leadMinutes && due)
     lines.push(`⏳ Heads-up ${task.leadMinutes} min before`);
   if (task.priority === 'high') lines.push('❗ High priority');
+  if (task.list) lines.push(`🗂 On your ${escapeHtml(task.list)} list`);
   return lines.join('\n');
+}
+
+/** "Shopping list" for the list "shopping". */
+export function listTitle(list: string): string {
+  return `🗂 ${escapeHtml(list.charAt(0).toUpperCase() + list.slice(1))} list`;
 }
 
 /** One-line description used in lists. */
@@ -161,7 +170,8 @@ function taskLine(task: Task, timezone: string, now: Date): string {
   const when = due ? formatForUserShort(due, timezone, task.allDay) : 'no date';
   const repeat = describeRecurrence(task.recurrence, timezone);
   const late = isTaskOverdue(task, now) ? ' 🔴' : '';
-  return `<b>${escapeHtml(task.description)}</b> · ${when}${repeat ? ` · 🔁 ${repeat}` : ''}${late}`;
+  const list = task.list ? ` · 🗂 ${escapeHtml(task.list)}` : '';
+  return `<b>${escapeHtml(task.description)}</b> · ${when}${repeat ? ` · 🔁 ${repeat}` : ''}${list}${late}`;
 }
 
 /** Numbered lines with a day header whenever the day changes. */

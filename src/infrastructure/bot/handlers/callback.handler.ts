@@ -28,7 +28,9 @@ import {
 } from '@usecases/rhythm';
 import { briefKeyboard, presentReview } from '../presenters/rhythm.presenter';
 import { presentAssistantResult } from '../presenters/assistant.presenter';
+import { LIST_CALLBACK_PREFIX } from '../presenters/lists.presenter';
 import { AssistantResponder } from '../assistant.responder';
+import { CommandHandler } from './command.handler';
 
 /** Short text shown as the toast after a button tap. */
 type Toast = string;
@@ -54,6 +56,7 @@ export class CallbackHandler {
     private readonly responder: AssistantResponder,
     private readonly resolveReview: ResolveReviewItemUsecase,
     private readonly moveOverdue: MoveOverdueToTodayUsecase,
+    private readonly commands: CommandHandler,
     @Inject(Domain.Task.Repository)
     private readonly taskRepository: TaskRepository,
     @Inject(Domain.Conversation.Repository)
@@ -90,6 +93,13 @@ export class CallbackHandler {
     if (data.startsWith('tz:')) return this.handleTimezone(ctx, data);
     if (data.startsWith('rv:')) return this.handleReview(ctx, data);
     if (data === 'brief:overdue') return this.handleBriefOverdue(ctx);
+    if (data.startsWith(LIST_CALLBACK_PREFIX)) {
+      await this.commands.showList(
+        ctx,
+        data.slice(LIST_CALLBACK_PREFIX.length),
+      );
+      return '';
+    }
     return '🤔 Unknown action';
   }
 

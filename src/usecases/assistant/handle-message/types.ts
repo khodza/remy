@@ -17,7 +17,14 @@ export type HandleMessageInput = {
 
 export type AssistantResult =
   | { kind: 'created'; tasks: Task[]; undoId: string }
-  | { kind: 'agenda'; range: QueryRange; search: string | null; tasks: Task[] }
+  | {
+      kind: 'agenda';
+      range: QueryRange;
+      search: string | null;
+      /** Normalised list name when the user asked for one list. */
+      list: string | null;
+      tasks: Task[];
+    }
   | { kind: 'completed'; tasks: Task[]; undoId: string }
   | {
       kind: 'rescheduled';
