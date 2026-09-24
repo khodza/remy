@@ -22,6 +22,7 @@ import { ExportController } from './controllers/export.controller';
 import { ListController } from './controllers/list.controller';
 import { AccountDataController } from './controllers/account-data.controller';
 import { ClientErrorController } from './controllers/client-error.controller';
+import { GoogleCalendarController } from './controllers/google-calendar.controller';
 import { DataModule } from '../data/data.module';
 import { NotificationModule } from '../notification/notification.module';
 import { getEnv } from '@common/config';
@@ -66,6 +67,7 @@ import {
     ListController,
     AccountDataController,
     ClientErrorController,
+    GoogleCalendarController,
     HealthController,
   ],
   providers: [

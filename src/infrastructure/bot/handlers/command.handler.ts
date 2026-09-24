@@ -31,6 +31,7 @@ export const BOT_COMMANDS = [
     command: 'export',
     description: 'Everything as a file (CSV, or /export json)',
   },
+  { command: 'connect', description: 'Google Calendar: connect, status, off' },
   { command: 'help', description: 'How to use Remy' },
 ] as const;
 

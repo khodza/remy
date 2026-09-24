@@ -110,6 +110,53 @@ atomically, with a 3-hour catch-up window after downtime):
 All times and switches live in the user's settings (`GET/PATCH /settings`,
 Mini App → Settings → Daily rhythm).
 
+## Google Calendar (optional)
+
+Remy can read the owner's Google Calendar (read-only) and list the day's
+events in the morning brief and `/today` in a short "📅 Calendar" block
+(all-day events first, cancelled and declined ones skipped, shown in the
+profile zone). Nothing is written to Google; tasks still reach calendars
+through the `.ics` feed.
+
+**Google Cloud, once (about five minutes):**
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create a
+   project (or pick one) → **APIs & Services → Library** → enable the
+   **Google Calendar API**.
+2. **APIs & Services → OAuth consent screen**: External, app name "Remy",
+   your e-mail as support and developer contact. Under **Audience** keep
+   the app in **Testing** and add your own Google account as a test user
+   (a single-owner bot never needs verification). Scopes are requested at
+   runtime: `calendar.readonly` and `userinfo.email` only.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   type **Web application**. Add exactly one authorised redirect URI: the
+   API's public callback, `https://<your host>/api/v1/integrations/google/callback`
+   (must match `GOOGLE_REDIRECT_URL` byte for byte).
+4. Put the client id and secret in `.env`:
+
+   ```
+   GOOGLE_CLIENT_ID=….apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=…
+   GOOGLE_REDIRECT_URL=https://<your host>/api/v1/integrations/google/callback
+   GOOGLE_TOKEN_KEY=<any 32+ random characters, optional>
+   ```
+
+Then send `/connect` to the bot: it answers with a "Connect Google Calendar"
+button (the link is signed for you and valid for 10 minutes), Google asks for
+consent, the callback stores the tokens and the bot confirms in the chat.
+`/connect` again shows the account and which calendars feed the brief;
+`/connect off` disconnects (the grant is revoked at Google and the tokens are
+deleted). A refresh token in Testing mode expires after 7 days of no use;
+`/connect` again fixes that.
+
+For the Mini App: `GET /integrations/google/status`, `POST …/connect`
+(returns the consent URL, to open in the system browser), `PATCH
+/integrations/google { calendarIds }` picks calendars (empty = primary),
+`DELETE /integrations/google` disconnects. Tokens are stored AES-256-GCM
+encrypted with a key derived from `GOOGLE_TOKEN_KEY` (or `JWT_SECRET`); the
+Google client is a small `fetch` wrapper (15 s timeout, one retry), and a
+Google outage only drops the Calendar block, never the brief.
+
 ## API contract
 
 Every request and response shape lives in one zod file,
@@ -207,7 +254,7 @@ Three layers, all offline:
 |---|---|
 | `npm test` | Unit tests next to the code (`*.spec.ts`), mocks only, ~5 s. Part of `npm run check`. |
 | `npm run test:int` | `TaskRepositoryImpl` against a real in-memory MongoDB: the atomic reminder claim (incl. 8 concurrent claimers), snooze re-arming, retry hold, view filters, legacy backfill. |
-| `npm run test:e2e` | The real `AppModule` over HTTP (supertest) against in-memory MongoDB with only Telegram stubbed: mock login + owner lock, settings, categories, structured create, views, patch/snooze/delay/complete/reopen/delete. Every response is parsed with the contract. |
+| `npm run test:e2e` | The real `AppModule` over HTTP (supertest) against in-memory MongoDB with only Telegram stubbed: mock login + owner lock, settings, categories, structured create, views, patch/snooze/delay/complete/reopen/delete. Every response is parsed with the contract. `google-calendar.e2e-spec.ts` runs the OAuth connect flow and the brief's Calendar block against the real Google client with a fake `fetch`. |
 
 The first `test:int` / `test:e2e` run downloads a MongoDB binary
 (mongodb-memory-server). `test/setup-env.ts` provides the baseline

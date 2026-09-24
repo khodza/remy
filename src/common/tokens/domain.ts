@@ -17,4 +17,20 @@ export const Domain = {
   Assistant: {
     InterpreterGateway: Symbol.for('Domain.Assistant.InterpreterGateway'),
   },
+  Integrations: {
+    GoogleConnectionRepository: Symbol.for(
+      'Domain.Integrations.GoogleConnectionRepository',
+    ),
+    GoogleCalendarGateway: Symbol.for(
+      'Domain.Integrations.GoogleCalendarGateway',
+    ),
+    ConnectStateSigner: Symbol.for('Domain.Integrations.ConnectStateSigner'),
+    GoogleConnectionNotifier: Symbol.for(
+      'Domain.Integrations.GoogleConnectionNotifier',
+    ),
+    /** The morning brief's optional source of the day's calendar events. */
+    CalendarEventsSource: Symbol.for(
+      'Domain.Integrations.CalendarEventsSource',
+    ),
+  },
 };

@@ -1,4 +1,5 @@
 import type { Task } from '@domain/task';
+import type { CalendarEvent } from '@domain/integrations/google-calendar';
 
 /** Sent at the morning-brief time (or on /today). */
 export type MorningBrief = {
@@ -17,6 +18,8 @@ export type MorningBrief = {
   inboxCount: number;
   /** True when sent at the scheduled time; false for /today on demand. */
   scheduled: boolean;
+  /** Today's Google Calendar events (all-day first), when an account is connected. */
+  calendarEvents?: CalendarEvent[];
 };
 
 export type ReviewOutcome = 'done' | 'tomorrow' | 'inbox' | 'skipped' | 'gone';

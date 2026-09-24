@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { addDays, subDays } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import {
@@ -8,6 +8,7 @@ import {
 } from '@domain/task/repository';
 import type { User } from '@domain/user';
 import type { EveningReview, MorningBrief, WeeklyWrap } from '@domain/rhythm';
+import type { CalendarEventsSource } from '@domain/integrations/google-calendar';
 import { Domain } from '@common/tokens';
 import { dayBoundsInZone } from '@common/day-bounds';
 import { effectiveDueAt } from '@common/fire-time';
@@ -23,6 +24,10 @@ export class DigestBuilder {
   constructor(
     @Inject(Domain.Task.Repository)
     private readonly tasks: TaskRepository,
+    /** Google Calendar events for the brief; absent when the module is not wired. */
+    @Optional()
+    @Inject(Domain.Integrations.CalendarEventsSource)
+    private readonly calendar?: CalendarEventsSource,
   ) {}
 
   public async buildBrief(
@@ -33,7 +38,7 @@ export class DigestBuilder {
   ): Promise<MorningBrief> {
     const { start, end } = dayBoundsInZone(now, timezone);
     const pending = { userId: user.id, statuses: [TaskStatus.Pending] };
-    const [today, overdue, inbox] = await Promise.all([
+    const [today, overdue, inbox, calendarEvents] = await Promise.all([
       this.tasks.find({
         ...pending,
         kind: 'reminder',
@@ -48,6 +53,8 @@ export class DigestBuilder {
         sort: 'dueAt',
       }),
       this.tasks.find({ ...pending, kind: 'todo', sort: 'createdAtDesc' }),
+      // Never throws: a Google outage costs the calendar block, not the brief.
+      this.calendar?.eventsForDay(user, timezone, now) ?? [],
     ]);
     return {
       kind: 'brief',
@@ -60,6 +67,7 @@ export class DigestBuilder {
       inbox: inbox.slice(0, INBOX_PREVIEW),
       inboxCount: inbox.length,
       scheduled,
+      ...(calendarEvents.length > 0 ? { calendarEvents } : {}),
     };
   }
 
