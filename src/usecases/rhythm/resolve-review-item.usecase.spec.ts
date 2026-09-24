@@ -10,6 +10,7 @@ import type { MarkCompleteUsecase } from '../task/mark-complete';
 import type { SnoozeTaskUsecase } from '../task/snooze-task';
 import type { UpdateTaskUsecase } from '../task/update-task';
 import type { SkipOccurrenceUsecase } from '../task/skip-occurrence';
+import { UndoRecorder } from '../assistant/undo-recorder';
 
 describe('ResolveReviewItemUsecase', () => {
   const now = new Date('2026-09-17T16:00:00Z'); // 21:00 Tashkent
@@ -70,9 +71,41 @@ describe('ResolveReviewItemUsecase', () => {
       snooze as unknown as SnoozeTaskUsecase,
       update as unknown as UpdateTaskUsecase,
       skip as unknown as SkipOccurrenceUsecase,
+      new UndoRecorder(conversations),
     );
   });
   afterEach(() => jest.useRealTimers());
+
+  it('records an Undo snapshot before acting, and the undo reopens the row', async () => {
+    const result = await usecase.execute({
+      ...input,
+      taskId: 'bill',
+      action: 'done',
+    });
+    expect(result?.undoId).toBe('undo-1');
+    expect(conversations.undos.get('undo-1')).toMatchObject({
+      label: 'done "Buy groceries"',
+      snapshots: [{ taskId: 'bill', status: TaskStatus.Pending }],
+    });
+    expect(conversations.saveUndo.mock.invocationCallOrder[0]).toBeLessThan(
+      mark.execute.mock.invocationCallOrder[0]!,
+    );
+    const reopened = await conversations.reopenReviewItems(42, 700, ['bill']);
+    expect(reopened?.items[0]).toMatchObject({ outcome: null, newDueAt: null });
+  });
+
+  it('a row that was handled elsewhere has nothing to undo', async () => {
+    tasks.findById.mockResolvedValueOnce(
+      makeTask({ id: 'bill', status: TaskStatus.Completed }),
+    );
+    const result = await usecase.execute({
+      ...input,
+      taskId: 'bill',
+      action: 'done',
+    });
+    expect(result).toMatchObject({ changed: true, undoId: null });
+    expect(conversations.saveUndo).not.toHaveBeenCalled();
+  });
 
   it('done → completes and marks the row', async () => {
     const result = await usecase.execute({
@@ -176,5 +209,15 @@ describe('ResolveReviewItemUsecase', () => {
       'done',
       'tomorrow',
     ]);
+  });
+
+  it('"all to tomorrow" records one Undo for the whole batch', async () => {
+    const result = await usecase.executeAll(input);
+    expect(result?.undoId).toBe('undo-1');
+    expect(conversations.saveUndo).toHaveBeenCalledTimes(1);
+    expect(conversations.undos.get('undo-1')).toMatchObject({
+      label: 'moved 2 open tasks to tomorrow',
+      snapshots: [{ taskId: 'bill' }, { taskId: 'gym' }],
+    });
   });
 });

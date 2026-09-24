@@ -252,5 +252,12 @@ describe('Phase 4 persistence (real MongoDB)', () => {
       await conversations.resolveReviewItem(42, 800, 'nope', 'done', null),
     ).toBeNull();
     expect(await conversations.getReview(42, 999)).toBeNull();
+
+    // Undo reopens exactly the named rows, buttons and all.
+    await conversations.resolveReviewItem(42, 800, 'b', 'done', null);
+    const reopened = await conversations.reopenReviewItems(42, 800, ['a']);
+    expect(reopened?.items.map((i) => i.outcome)).toEqual([null, 'done']);
+    expect(reopened?.items[0]).toMatchObject({ newDueAt: null, dueAt });
+    expect(await conversations.reopenReviewItems(42, 999, ['a'])).toBeNull();
   });
 });

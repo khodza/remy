@@ -25,7 +25,11 @@ import {
   ResolveReviewItemUsecase,
   type ReviewAction,
 } from '@usecases/rhythm';
-import { briefKeyboard, presentReview } from '../presenters/rhythm.presenter';
+import {
+  REVIEW_UNDO_PREFIX,
+  briefKeyboard,
+  presentReview,
+} from '../presenters/rhythm.presenter';
 import { presentAssistantResult } from '../presenters/assistant.presenter';
 import { LIST_CALLBACK_PREFIX } from '../presenters/lists.presenter';
 import { AssistantResponder } from '../assistant.responder';
@@ -88,6 +92,8 @@ export class CallbackHandler {
     if (data.startsWith('ans:')) return this.handleAnswer(ctx, data);
     if (data === 'noop') return '';
     if (data.startsWith('fwd:')) return this.handleForwardWhen(ctx, data);
+    if (data.startsWith(REVIEW_UNDO_PREFIX))
+      return this.handleReviewUndo(ctx, data);
     if (data.startsWith('rv:')) return this.handleReview(ctx, data);
     if (data === 'brief:overdue') return this.handleBriefOverdue(ctx);
     if (data.startsWith(LIST_CALLBACK_PREFIX)) {
@@ -310,9 +316,6 @@ export class CallbackHandler {
     if (result === undefined) return '🤔 Unknown action';
     if (result === null) return '⌛ That review is no longer available';
 
-    const reply = presentReview(result.review);
-    await this.edit(ctx, reply.html, reply.keyboard);
-    if (!result.changed) return '👌 Already sorted';
     const toasts: Record<string, string> = {
       done: '✅ Done',
       tmr: '⏭ Moved to tomorrow 09:00',
@@ -320,7 +323,48 @@ export class CallbackHandler {
       skip: '⏩ Skipped this time',
       all: '⏭ All moved to tomorrow 09:00',
     };
-    return toasts[code] ?? '👌';
+    const toast = toasts[code] ?? '👌';
+    const reply = presentReview(
+      result.review,
+      new Date(),
+      result.changed && result.undoId
+        ? { id: result.undoId, label: toast.replace(/^\S+\s/, '') }
+        : null,
+    );
+    await this.edit(ctx, reply.html, reply.keyboard);
+    if (!result.changed) return '👌 Already sorted';
+    return toast;
+  }
+
+  /** The Undo row under a review: restore the task(s) and reopen their rows. */
+  private async handleReviewUndo(ctx: Context, data: string): Promise<Toast> {
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (!ctx.from || messageId === undefined) return '❌ Action failed';
+    const chatId = ctx.chat?.id ?? ctx.from.id;
+    const user = await this.ensureUserUsecase.execute(
+      toEnsureUserInput(ctx.from),
+    );
+    const result = await this.undoAction.execute({
+      undoId: data.slice(REVIEW_UNDO_PREFIX.length),
+      chatId,
+      userId: user.id,
+    });
+    const review = result.undone
+      ? await this.conversations.reopenReviewItems(
+          chatId,
+          messageId,
+          result.taskIds,
+        )
+      : await this.conversations.getReview(chatId, messageId);
+    if (review) {
+      const reply = presentReview(review);
+      await this.edit(ctx, reply.html, reply.keyboard);
+    } else {
+      await ignoreNotModified(
+        ctx.editMessageReplyMarkup({ reply_markup: undefined }),
+      );
+    }
+    return result.undone ? '↩ Undone' : '⌛ Too late to undo that';
   }
 
   /** The brief's "Move overdue to today". */

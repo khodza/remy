@@ -158,6 +158,35 @@ describe('presentReview', () => {
     expect(done.keyboard).toBeUndefined();
   });
 
+  it('the last tap gets an Undo row, even once everything is sorted', () => {
+    const partly = presentReview(
+      {
+        ...review,
+        items: [{ ...review.items[0]!, outcome: 'done' }, review.items[1]!],
+      },
+      now,
+      { id: 'u1', label: 'Done' },
+    );
+    expect(buttons(partly)).toEqual([
+      ['2 ✅', '2 ⏭ Tmrw 09:00', '2 ⏩ Skip'],
+      ['↩ Undo: Done'],
+    ]);
+    expect(partly.keyboard!.inline_keyboard.at(-1)![0]).toMatchObject({
+      callback_data: 'rvundo:u1',
+    });
+
+    const sorted = presentReview(
+      {
+        ...review,
+        items: review.items.map((i) => ({ ...i, outcome: 'done' as const })),
+      },
+      now,
+      { id: 'u2', label: 'Done' },
+    );
+    expect(sorted.html).toContain('All sorted');
+    expect(buttons(sorted)).toEqual([['↩ Undo: Done']]);
+  });
+
   it('nothing open at all', () => {
     expect(
       presentReview({ timezone: tz, doneToday: 0, items: [] }, now).html,

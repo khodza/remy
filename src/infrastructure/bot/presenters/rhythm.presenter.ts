@@ -131,10 +131,17 @@ export function briefKeyboard(hasOverdue: boolean): InlineKeyboard | undefined {
 
 // ----------------------------------------------------------------- review ---
 
-/** Used for the first send and for every redraw after a row is resolved. */
+/** Callback prefix of the Undo row under an evening review. */
+export const REVIEW_UNDO_PREFIX = 'rvundo:';
+
+/**
+ * Used for the first send and for every redraw after a row is resolved.
+ * `undo` names the last tap, so the redrawn message carries its Undo.
+ */
 export function presentReview(
   review: ReviewState,
   now: Date = new Date(),
+  undo: { id: string; label: string } | null = null,
 ): BotReply {
   const tz = review.timezone;
   const lines: string[] = [
@@ -153,14 +160,24 @@ export function presentReview(
     lines.push(reviewLine(item, i + 1, tz, now)),
   );
 
+  const keyboard = new InlineKeyboard();
+  let rows = 0;
+  const undoRow = (): void => {
+    if (!undo) return;
+    if (rows++ > 0) keyboard.row();
+    keyboard.text(
+      `↩ Undo: ${undo.label.slice(0, 40)}`,
+      `${REVIEW_UNDO_PREFIX}${undo.id}`,
+    );
+  };
+
   const open = review.items.filter((i) => i.outcome === null);
   if (open.length === 0) {
     lines.push('', 'All sorted. Good night! 🌙');
-    return { html: lines.join('\n') };
+    undoRow();
+    return { html: lines.join('\n'), ...(undo ? { keyboard } : {}) };
   }
 
-  const keyboard = new InlineKeyboard();
-  let rows = 0;
   review.items.forEach((item, i) => {
     if (item.outcome !== null) return;
     // Start a new row between items; a trailing empty row is invalid.
@@ -174,6 +191,7 @@ export function presentReview(
   });
   if (open.length >= 2)
     keyboard.row().text('⏭ All open → tomorrow 09:00', 'rv:all');
+  undoRow();
   return { html: lines.join('\n'), keyboard };
 }
 

@@ -195,6 +195,19 @@ export function mockConversationRepository(): jest.Mocked<ConversationRepository
         return structuredClone(r);
       },
     ),
+    reopenReviewItems: jest.fn(
+      async (chatId: number, messageId: number, taskIds: string[]) => {
+        const r = reviews.get(`${chatId}:${messageId}`);
+        if (!r) return null;
+        for (const item of r.items) {
+          if (taskIds.includes(item.taskId)) {
+            item.outcome = null;
+            item.newDueAt = null;
+          }
+        }
+        return structuredClone(r);
+      },
+    ),
     linkMessage: jest.fn(async (link) => {
       links.set(`${link.chatId}:${link.messageId}`, link.taskIds);
     }),

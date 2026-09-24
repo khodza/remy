@@ -229,6 +229,29 @@ export class ConversationRepositoryImpl implements ConversationRepository {
     return doc?.review ? toReviewState(doc.review) : null;
   }
 
+  public async reopenReviewItems(
+    chatId: number,
+    messageId: number,
+    taskIds: string[],
+  ): Promise<ReviewState | null> {
+    const doc = await this.messages
+      .findOneAndUpdate(
+        { chat_id: chatId, message_id: messageId, review: { $ne: null } },
+        {
+          $set: {
+            'review.items.$[item].outcome': null,
+            'review.items.$[item].new_due_at': null,
+          },
+        },
+        {
+          new: true,
+          arrayFilters: [{ 'item.task_id': { $in: taskIds } }],
+        },
+      )
+      .lean();
+    return doc?.review ? toReviewState(doc.review) : null;
+  }
+
   public async deleteAllForChat(chatId: number): Promise<void> {
     await Promise.all([
       this.messages.deleteMany({ chat_id: chatId }),
