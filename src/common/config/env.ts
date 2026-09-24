@@ -22,6 +22,23 @@ const boolish = z.preprocess((value) => {
   return Boolean(value);
 }, z.boolean());
 
+/** "900", "900s", "15m", "12h", "7d" → seconds (jsonwebtoken's `expiresIn`). */
+const DURATION_UNITS = { s: 1, m: 60, h: 3600, d: 86400 } as const;
+const duration = z
+  .string()
+  .trim()
+  .regex(
+    /^\d+\s*[smhd]?$/,
+    'must be a number of seconds or a number with s/m/h/d, e.g. 15m',
+  )
+  .transform((value) => {
+    const match = /^(\d+)\s*([smhd]?)$/.exec(value);
+    const amount = Number(match?.[1]);
+    const unit = (match?.[2] || 's') as keyof typeof DURATION_UNITS;
+    return amount * DURATION_UNITS[unit];
+  })
+  .refine((seconds) => seconds > 0, 'must be longer than zero');
+
 const csv = z
   .string()
   .optional()
@@ -48,7 +65,8 @@ export const envSchema = z
     MONGODB_URI: z.string().min(1).default('mongodb://localhost:27017/remy'),
 
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-    JWT_EXPIRES_IN: z.string().min(1).default('15m'),
+    /** Token lifetime, parsed to seconds ("15m" → 900). */
+    JWT_EXPIRES_IN: duration.default(900),
     INIT_DATA_MAX_AGE_SECONDS: z.coerce
       .number()
       .int()
@@ -90,8 +108,52 @@ export const envSchema = z
      * used from a plain browser. Refused in production.
      */
     DEV_ALLOW_MOCK_INITDATA: boolish.default(false),
+
+    /** pino level. Default: debug in development, info in production, silent in tests. */
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .optional(),
+
+    /**
+     * How Telegram updates arrive. `polling` (default) needs no public URL;
+     * `webhook` makes Telegram POST updates to WEBHOOK_URL, which this
+     * process serves itself (the URL's path is the route).
+     */
+    BOT_MODE: z.enum(['polling', 'webhook']).default('polling'),
+    /** Webhook mode: the public https URL Telegram calls, e.g. https://remy.example.com/telegram/webhook */
+    WEBHOOK_URL: z
+      .string()
+      .url()
+      .refine((u) => u.startsWith('https://'), 'must be an https URL')
+      .refine(
+        (u) => new URL(u).pathname !== '/',
+        'must have a path, e.g. https://remy.example.com/telegram/webhook',
+      )
+      .optional(),
+    /**
+     * Webhook mode: sent by Telegram as X-Telegram-Bot-Api-Secret-Token and
+     * checked on every update. Telegram allows 1-256 chars of A-Z a-z 0-9 _ -.
+     */
+    WEBHOOK_SECRET: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9_-]{1,256}$/,
+        'must be 1-256 characters of A-Z, a-z, 0-9, _ or -',
+      )
+      .optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.BOT_MODE === 'webhook') {
+      for (const key of ['WEBHOOK_URL', 'WEBHOOK_SECRET'] as const) {
+        if (env[key] === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: 'is required when BOT_MODE=webhook',
+          });
+        }
+      }
+    }
     if (env.NODE_ENV !== 'production') return;
     if (env.DEV_ALLOW_MOCK_INITDATA) {
       ctx.addIssue({
@@ -146,8 +208,4 @@ export function getEnv(): Env {
   if (process.env['NODE_ENV'] === 'test') return loadEnv();
   cached ??= loadEnv();
   return cached;
-}
-
-export function resetEnvCache(): void {
-  cached = undefined;
 }

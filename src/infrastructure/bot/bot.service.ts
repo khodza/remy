@@ -1,21 +1,51 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
-import { Bot } from 'grammy';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
+import { HttpAdapterHost, ModuleRef } from '@nestjs/core';
+import type { Express } from 'express';
+import { Bot, webhookCallback } from 'grammy';
 import { run, type RunnerHandle } from '@grammyjs/runner';
 import { MessageHandler } from './handlers/message.handler';
 import { CallbackHandler } from './handlers/callback.handler';
 import { BOT_COMMANDS, CommandHandler } from './handlers/command.handler';
 import { getEnv } from '@common/config';
 
+/**
+ * Webhook mode answers Telegram within this time; a slower update (a voice
+ * note through Whisper and GPT) keeps running in the background so Telegram
+ * does not redeliver it.
+ */
+export const WEBHOOK_TIMEOUT_MS = 10_000;
+
+/** Telegram sends WEBHOOK_SECRET in this header on every update. */
+export const WEBHOOK_SECRET_HEADER = 'X-Telegram-Bot-Api-Secret-Token';
+
+/** The Express handler grammY builds for the webhook route. */
+export type WebhookHandler = ReturnType<
+  typeof webhookCallback<never, 'express'>
+>;
+
+/**
+ * Owns the grammY Bot: wires the handlers and receives updates either by
+ * long polling (default) or, with BOT_MODE=webhook, on a POST route this
+ * process serves at the path of WEBHOOK_URL.
+ */
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(TelegramBotService.name);
   private bot: Bot;
   private runner: RunnerHandle | undefined;
   private messageHandler!: MessageHandler;
   private callbackHandler!: CallbackHandler;
   private commandHandler!: CommandHandler;
 
-  constructor(private moduleRef: ModuleRef) {
+  constructor(
+    private moduleRef: ModuleRef,
+    private httpAdapterHost: HttpAdapterHost,
+  ) {
     this.bot = new Bot(getEnv().TELEGRAM_BOT_TOKEN);
   }
 
@@ -34,11 +64,23 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // Populate Telegram's "/" menu. Non-fatal: the bot works without it.
     this.bot.api.setMyCommands([...BOT_COMMANDS]).catch((error: unknown) => {
-      console.error('⚠️  Failed to register bot commands:', error);
+      this.logger.warn(`Failed to register bot commands: ${describe(error)}`);
     });
 
-    this.startPolling();
-    console.log('✅ Telegram bot polling in background...');
+    const env = getEnv();
+    if (env.BOT_MODE === 'webhook') {
+      // Validated together in env.ts; narrowed here for the type checker.
+      if (env.WEBHOOK_URL === undefined || env.WEBHOOK_SECRET === undefined) {
+        throw new Error(
+          'BOT_MODE=webhook needs WEBHOOK_URL and WEBHOOK_SECRET',
+        );
+      }
+      await this.startWebhook(env.WEBHOOK_URL, env.WEBHOOK_SECRET);
+    } else {
+      await this.dropWebhook();
+      this.startPolling();
+      this.logger.log('Telegram updates: long polling');
+    }
   }
 
   /**
@@ -49,10 +91,59 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   protected startPolling(): void {
     this.runner = run(this.bot);
     this.runner.task()?.catch((error: unknown) => {
-      console.error('❌ Telegram bot polling stopped:', error);
-      console.log(
-        '⚠️  Bot will not respond to messages, but scheduler will still run',
+      this.logger.error(
+        `Telegram bot polling stopped: ${describe(error)}. The bot will not respond to messages, but the scheduler still runs`,
       );
+    });
+  }
+
+  /**
+   * A webhook left over from a previous deployment would make getUpdates
+   * fail with 409, so polling mode always clears it first. Non-fatal.
+   */
+  private async dropWebhook(): Promise<void> {
+    try {
+      await this.bot.api.deleteWebhook();
+    } catch (error) {
+      this.logger.warn(`Could not delete a stale webhook: ${describe(error)}`);
+    }
+  }
+
+  /**
+   * Serve `POST <path of WEBHOOK_URL>` and tell Telegram to use it. The route
+   * goes on the Express instance directly (no /api/v1 prefix, no throttler
+   * or JWT guard); Nest runs onModuleInit after the body parser and the
+   * logging middleware are in place and before its 404 handler, so the
+   * update arrives parsed and the secret header is already redacted in logs.
+   */
+  private async startWebhook(url: string, secret: string): Promise<void> {
+    const path = new URL(url).pathname;
+    const express = this.httpAdapterHost.httpAdapter.getInstance<Express>();
+    express.post(path, this.webhookHandler(secret));
+
+    try {
+      // Fetch the bot's identity now rather than on the first update, so an
+      // unauthorised request never triggers a Telegram call.
+      await this.bot.init();
+      await this.bot.api.setWebhook(url, { secret_token: secret });
+      this.logger.log(`Telegram updates: webhook at ${url}`);
+    } catch (error) {
+      // Telegram keeps an earlier registration of the same URL, so serve it
+      // anyway; /health reports Telegram as down until it answers.
+      this.logger.error(`setWebhook failed: ${describe(error)}`);
+    }
+  }
+
+  /**
+   * grammY's Express handler: 401 unless X-Telegram-Bot-Api-Secret-Token
+   * matches (constant-time), then the update runs through the same
+   * middleware stack as polling.
+   */
+  public webhookHandler(secret: string): WebhookHandler {
+    return webhookCallback(this.bot, 'express', {
+      secretToken: secret,
+      timeoutMilliseconds: WEBHOOK_TIMEOUT_MS,
+      onTimeout: 'return',
     });
   }
 
@@ -60,7 +151,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     if (this.runner?.isRunning()) {
       await this.runner.stop();
     }
-    console.log('Telegram bot stopped');
+    this.logger.log('Telegram bot stopped');
   }
 
   public getBot(): Bot {
@@ -71,9 +162,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     // Without an error handler grammY stops long polling on the first error
     // thrown by any handler (e.g. a failed reply), silently killing the bot.
     this.bot.catch((err) => {
-      console.error(
-        `❌ Error while handling update ${err.ctx.update.update_id}:`,
-        err.error,
+      this.logger.error(
+        `Error while handling update ${err.ctx.update.update_id}: ${describe(err.error)}`,
+        err.error instanceof Error ? err.error.stack : undefined,
       );
     });
 
@@ -122,4 +213,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       this.callbackHandler.handle(ctx),
     );
   }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

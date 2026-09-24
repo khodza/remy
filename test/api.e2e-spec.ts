@@ -82,6 +82,12 @@ describe('Remy API (e2e)', () => {
     };
   });
 
+  // /health asks Telegram who we are (cached).
+  const getMe = jest.fn(async () => ({
+    id: 1,
+    is_bot: true,
+    first_name: 'Remy',
+  }));
   const api = () => request(app.getHttpServer());
   const authed = (req: request.Test) =>
     req.set('Authorization', `Bearer ${token}`);
@@ -103,7 +109,9 @@ describe('Remy API (e2e)', () => {
     // are read lazily (getEnv() re-reads process.env under NODE_ENV=test).
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(TelegramBotService)
-      .useValue({ getBot: () => ({ api: { sendMessage, sendDocument } }) })
+      .useValue({
+        getBot: () => ({ api: { sendMessage, sendDocument, getMe } }),
+      })
       .overrideProvider(Domain.Assistant.InterpreterGateway)
       .useValue({ interpret })
       // The "recording" is its own transcript.
@@ -125,8 +133,12 @@ describe('Remy API (e2e)', () => {
     await mongod?.stop();
   });
 
-  it('health needs no auth', async () => {
-    await api().get('/api/v1/health').expect(200);
+  it('health needs no auth and checks Mongo and Telegram', async () => {
+    const res = await api().get('/api/v1/health').expect(200);
+    expect(res.body).toMatchObject({
+      status: 'ok',
+      checks: { mongo: { status: 'up' }, telegram: { status: 'up' } },
+    });
   });
 
   it('rejects unauthenticated and foreign callers', async () => {

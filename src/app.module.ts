@@ -8,7 +8,9 @@ import { NotificationModule } from './application/common/notification/notificati
 import { BotModule } from './application/common/bot/bot.module';
 import { RemindersSchedulerModule } from './application/common/scheduler/scheduler.module';
 import { HttpModule } from './application/common/http/http.module';
+import { LoggerModule } from 'nestjs-pino';
 import { getEnv, loadEnv } from '@common/config';
+import { loggerParams } from './application/common/logging/logger.options';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { getEnv, loadEnv } from '@common/config';
       isGlobal: true,
       validate: (config) => loadEnv(config),
     }),
+    // pino: request ids, JSON in production. How to log: CLAUDE.md "Logging".
+    LoggerModule.forRootAsync({ useFactory: () => loggerParams(getEnv()) }),
     MongooseModule.forRootAsync({
       useFactory: () => ({ uri: getEnv().MONGODB_URI }),
     }),
