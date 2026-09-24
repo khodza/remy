@@ -22,6 +22,7 @@ import {
   CommandHandler,
   MessageHandler,
 } from '@infra/bot/handlers';
+import { ConnectCommandHandler } from '@infra/bot/handlers/connect.handler';
 import { HealthController } from '@application/common/http/controllers/health.controller';
 import { HealthService } from '@application/common/http/services/health.service';
 
@@ -58,6 +59,7 @@ describe('configureApp', () => {
         { provide: CommandHandler, useValue: { handleHelp } },
         { provide: MessageHandler, useValue: {} },
         { provide: CallbackHandler, useValue: {} },
+        { provide: ConnectCommandHandler, useValue: {} },
         {
           provide: HealthService,
           useValue: { check: async () => ({ status: 'ok', checks: {} }) },
