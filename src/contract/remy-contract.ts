@@ -572,6 +572,50 @@ export const UpdateTimezoneRequest = z
   .strict();
 export type UpdateTimezoneRequest = z.infer<typeof UpdateTimezoneRequest>;
 
+// ----------------------------------------------------------- integrations ---
+
+/** One of the connected account's calendars; `selected` = it feeds the brief. */
+export const GoogleCalendarInfo = z.object({
+  id: z.string(),
+  summary: z.string(),
+  selected: z.boolean(),
+});
+export type GoogleCalendarInfo = z.infer<typeof GoogleCalendarInfo>;
+
+/**
+ * GET /integrations/google/status. `configured` is false until the server
+ * has a Google OAuth client (env); `connected` once the owner finished the
+ * consent flow. `calendars` is present when Google could be reached (the
+ * primary calendar is selected until the owner picks otherwise).
+ */
+export const GoogleStatus = z.object({
+  configured: z.boolean(),
+  connected: z.boolean(),
+  email: z.string().nullable().optional(),
+  calendars: z.array(GoogleCalendarInfo).optional(),
+});
+export type GoogleStatus = z.infer<typeof GoogleStatus>;
+
+/**
+ * POST /integrations/google/connect — the Google consent URL to open in the
+ * browser (outside the Mini App webview). Its `state` is signed for the
+ * caller and expires in 10 minutes. 409 when the server is not configured.
+ */
+export const GoogleConnectResult = z.object({ url: z.string() });
+export type GoogleConnectResult = z.infer<typeof GoogleConnectResult>;
+
+/**
+ * PATCH /integrations/google — which calendars feed the brief; ids come
+ * from GoogleStatus.calendars. Empty = the primary calendar only. 400 for
+ * an id Google does not list, 404 when no account is connected.
+ */
+export const SelectGoogleCalendarsRequest = z
+  .object({ calendarIds: z.array(z.string().min(1).max(200)).max(50) })
+  .strict();
+export type SelectGoogleCalendarsRequest = z.infer<
+  typeof SelectGoogleCalendarsRequest
+>;
+
 // -------------------------------------------------------------- endpoints ---
 
 /**
@@ -630,5 +674,31 @@ export const endpoints = {
   exportData: { method: 'POST', path: '/export', auth: 'jwt' },
   deleteAllData: { method: 'DELETE', path: '/data', auth: 'jwt' },
   reportClientError: { method: 'POST', path: '/client-errors', auth: 'jwt' },
+  googleStatus: {
+    method: 'GET',
+    path: '/integrations/google/status',
+    auth: 'jwt',
+  },
+  googleConnect: {
+    method: 'POST',
+    path: '/integrations/google/connect',
+    auth: 'jwt',
+  },
+  /** Google's redirect target (browser); the signed `state` is the auth. Answers HTML. */
+  googleCallback: {
+    method: 'GET',
+    path: '/integrations/google/callback',
+    auth: 'none',
+  },
+  googleDisconnect: {
+    method: 'DELETE',
+    path: '/integrations/google',
+    auth: 'jwt',
+  },
+  googleSelectCalendars: {
+    method: 'PATCH',
+    path: '/integrations/google',
+    auth: 'jwt',
+  },
 } as const;
 export type EndpointName = keyof typeof endpoints;

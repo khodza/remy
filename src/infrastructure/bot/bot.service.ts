@@ -5,6 +5,7 @@ import { run, type RunnerHandle } from '@grammyjs/runner';
 import { MessageHandler } from './handlers/message.handler';
 import { CallbackHandler } from './handlers/callback.handler';
 import { BOT_COMMANDS, CommandHandler } from './handlers/command.handler';
+import { ConnectCommandHandler } from './handlers/connect.handler';
 import { getEnv } from '@common/config';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private messageHandler!: MessageHandler;
   private callbackHandler!: CallbackHandler;
   private commandHandler!: CommandHandler;
+  private connectHandler!: ConnectCommandHandler;
 
   constructor(private moduleRef: ModuleRef) {
     this.bot = new Bot(getEnv().TELEGRAM_BOT_TOKEN);
@@ -26,6 +28,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       strict: false,
     });
     this.commandHandler = this.moduleRef.get(CommandHandler, {
+      strict: false,
+    });
+    this.connectHandler = this.moduleRef.get(ConnectCommandHandler, {
       strict: false,
     });
 
@@ -104,6 +109,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     );
     this.bot.command('export', (ctx) => this.commandHandler.handleExport(ctx));
     this.bot.command('help', (ctx) => this.commandHandler.handleHelp(ctx));
+    // Google Calendar (GoogleCalendarModule): link, status, "/connect off".
+    this.bot.command('connect', (ctx) =>
+      this.connectHandler.handleConnect(ctx),
+    );
 
     // Forwarded messages come first: a forwarded text would otherwise be
     // read as an instruction. They are kept and Remy asks "when?".

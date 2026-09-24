@@ -8,6 +8,7 @@ import { NotificationModule } from './application/common/notification/notificati
 import { BotModule } from './application/common/bot/bot.module';
 import { RemindersSchedulerModule } from './application/common/scheduler/scheduler.module';
 import { HttpModule } from './application/common/http/http.module';
+import { GoogleCalendarModule } from './application/common/integrations/google-calendar.module';
 import { getEnv, loadEnv } from '@common/config';
 
 @Module({
@@ -27,6 +28,7 @@ import { getEnv, loadEnv } from '@common/config';
     NotificationModule,
     BotModule, // Import after NotificationModule to provide handlers
     RemindersSchedulerModule,
+    GoogleCalendarModule, // Global: the brief's calendar block and /connect
     HttpModule,
   ],
 })
