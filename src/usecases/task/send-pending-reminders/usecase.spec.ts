@@ -339,6 +339,51 @@ describe('SendPendingRemindersUsecase', () => {
   });
 
   describe('nudges for ignored reminders (steps 30, 120)', () => {
+    it('high priority nudges harder: 10, 30 and 60 minutes, whatever the normal steps are', async () => {
+      setup({ escalation: { enabled: true, stepsMinutes: [45] } });
+      queueClaims([makeTask({ priority: 'high' })]);
+      await usecase.execute();
+      expect(taskRepository.update).toHaveBeenCalledWith({
+        id: 'task-1',
+        nudgeAt: new Date('2026-04-16T12:10:00Z'),
+        nudgeCount: 0,
+      });
+
+      // Second nudge 20 minutes after the first (30 - 10), third 30 later.
+      const nudgeAt = new Date('2026-04-16T12:00:00Z');
+      for (const [count, next] of [
+        [0, '2026-04-16T12:20:00Z'],
+        [1, '2026-04-16T12:30:00Z'],
+        [2, null],
+      ] as const) {
+        taskRepository.update.mockClear();
+        queueClaims([
+          makeTask({
+            priority: 'high',
+            scheduledAt: new Date('2026-04-16T11:00:00Z'),
+            nudgeAt,
+            nextFireAt: nudgeAt,
+            nudgeCount: count,
+          }),
+        ]);
+        await usecase.execute();
+        expect(taskRepository.update).toHaveBeenCalledWith({
+          id: 'task-1',
+          nudgeCount: count + 1,
+          nudgeAt: next === null ? null : new Date(next),
+        });
+      }
+    });
+
+    it('high priority still respects the master switch', async () => {
+      setup({ escalation: { enabled: false, stepsMinutes: [30, 120] } });
+      queueClaims([makeTask({ priority: 'high' })]);
+      await usecase.execute();
+      expect(taskRepository.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ nudgeCount: 0 }),
+      );
+    });
+
     it('after the reminder, schedules the first nudge 30 minutes later', async () => {
       queueClaims([makeTask()]);
       await usecase.execute();

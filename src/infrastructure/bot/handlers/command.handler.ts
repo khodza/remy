@@ -11,6 +11,7 @@ import type { ConversationRepository } from '@domain/conversation';
 import { Domain } from '@common/tokens';
 import { getEnv } from '@common/config';
 import { DigestBuilder, briefTaskIds } from '@usecases/rhythm';
+import { HIGH_PRIORITY_STEPS_MINUTES } from '@usecases/task/send-pending-reminders';
 import { ExportDataUsecase } from '@usecases/data';
 import { presentBrief } from '../presenters/rhythm.presenter';
 
@@ -279,6 +280,10 @@ export class CommandHandler {
           s.escalation.enabled && s.escalation.stepsMinutes.length > 0
             ? `nudge after ${s.escalation.stepsMinutes.map(humanDelay).join(' and ')}`
             : 'no nudges'
+        }${
+          s.escalation.enabled
+            ? ` · high priority after ${HIGH_PRIORITY_STEPS_MINUTES.map(humanDelay).join(', ')}, low never`
+            : ''
         }`,
       ].join('\n');
 
@@ -338,7 +343,7 @@ export class CommandHandler {
         `<b>When it's time</b>\n` +
         `Buttons show the resulting time: ✅ Done, +15m, +1h, Tonight, Tomorrow. ` +
         `Every change has an ↩ Undo for 10 minutes. ` +
-        `If you ignore a reminder I nudge you again (after 30 min and 2 h by default), never during your quiet hours.\n\n` +
+        `If you ignore a reminder I nudge you again (after 30 min and 2 h by default; a high-priority one after 10, 30 and 60 min, and it rings through quiet hours), never a low-priority one.\n\n` +
         `<b>Every day</b>\n` +
         `☀️ Morning brief: today's plan, overdue things, your Inbox.\n` +
         `🌙 Evening review: what is still open, with one-tap Done / Tomorrow / No date.\n` +

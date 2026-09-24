@@ -21,6 +21,21 @@ import { SendPendingRemindersOutput } from './types';
  */
 export const RETRY_BACKOFF_MINUTES = [2, 4, 8, 16, 32] as const;
 export const MAX_DELIVERY_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
+/**
+ * High-priority tasks nudge harder than the user's normal steps: sooner
+ * and one more time. Low priority never nudges; normal uses the settings.
+ */
+export const HIGH_PRIORITY_STEPS_MINUTES = [10, 30, 60] as const;
+
+/** The nudge delays (minutes after the reminder) this task gets. */
+export function escalationStepsFor(
+  task: Pick<ScheduledTask, 'priority'>,
+  settings: UserSettings,
+): number[] {
+  if (!settings.escalation.enabled || task.priority === 'low') return [];
+  if (task.priority === 'high') return [...HIGH_PRIORITY_STEPS_MINUTES];
+  return settings.escalation.stepsMinutes;
+}
 /** Safety valve so one run can't loop forever if claims never stop. */
 const MAX_SENDS_PER_RUN = 500;
 
@@ -192,11 +207,11 @@ export class SendPendingRemindersUsecase {
     now: Date,
   ): Promise<void> {
     if (ping === 'heads_up') return;
-    const steps = settings.escalation.stepsMinutes;
+    const steps = escalationStepsFor(task, settings);
     try {
       if (ping === 'due') {
         const first = steps[0];
-        if (!nudgesAllowed(task, settings) || first === undefined) return;
+        if (first === undefined) return;
         await this.taskRepository.update({
           id: task.id,
           nudgeAt: addMinutes(now, first),
@@ -297,5 +312,5 @@ function classify(task: ScheduledTask): Ping {
 }
 
 function nudgesAllowed(task: ScheduledTask, settings: UserSettings): boolean {
-  return settings.escalation.enabled && task.priority !== 'low';
+  return escalationStepsFor(task, settings).length > 0;
 }
