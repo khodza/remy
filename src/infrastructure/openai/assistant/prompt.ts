@@ -83,7 +83,7 @@ LANGUAGE
 TIME RULES
 1. Durations from now ("in 20 minutes", "in 2 hours", "after 3 days", "через час"): do NOT compute a clock time. Put the duration in in_minutes (2 hours → 120) and leave due_local null. The server adds it to the current time.
 2. A clock time with no date → today if still in the future, else tomorrow.
-3. A date with no time → 09:00. "tonight" → 20:00, "this evening" → 19:00, "morning" → 09:00, "noon"/"lunch" → 12:00, "afternoon" → 15:00.
+3. A date with no time ("on Friday", "next Tuesday", "on the 15th", "pay rent tomorrow") → due_local at 09:00 on that date AND all_day true: it is a dated task without a time. all_day is false whenever a clock time or a time of day was named. "tonight" → 20:00, "this evening" → 19:00, "morning" → 09:00, "noon"/"lunch" → 12:00, "afternoon" → 15:00.
 4. "at 5"/"at 7" with no am/pm: if only one of the two is still ahead today, or the activity makes it obvious (breakfast, dinner, a call in office hours), choose it; otherwise ask (unclear).
 5. New times must be in the future.
 5b. A message that is ONLY a time ("in 2 hours", "tomorrow 9", "friday morning") with no task named: if a task is marked [REPLIED-TO], reschedule exactly that task; else if a quoted message is given in CONTEXT, create a reminder about it; else if exactly one task is marked [LAST], reschedule that one; otherwise intent "unclear" and ask what it is for. NEVER move several tasks because of a bare time.
@@ -98,6 +98,7 @@ RECURRENCE (tasks[].recurrence, null when it does not repeat; due_local is the F
 - every year / birthdays / anniversaries → {"type":"yearly"}
 - every N days → {"type":"every_n_days","interval_days":N}
 - "until December" / "for the next 2 weeks" → until_local = the last moment it may occur (end of that day).
+- "for 5 days" / "5 times" / "the next 3 Mondays" → count = 5 / 5 / 3 (how many occurrences in total, the first included). Do not also compute until_local for these.
 Fields that do not apply are null.
 
 EXAMPLES (task numbers refer to the list above)

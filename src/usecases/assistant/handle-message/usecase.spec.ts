@@ -268,6 +268,7 @@ describe('HandleMessageUsecase', () => {
         notes: 'bring towel',
         scheduledAt: dueAt,
         timezone: 'Asia/Tashkent',
+        allDay: false,
         recurrence: { type: 'weekly', byWeekday: [1, 4], anchorAt: dueAt },
         priority: 'high',
         categoryId: healthId,

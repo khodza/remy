@@ -154,7 +154,11 @@ export function reminderText(input: SendReminderInput, now: Date): string {
     lines.push('🔔 <b>Reminder</b>');
   }
   lines.push('', `📝 ${escapeHtml(input.description)}`);
-  lines.push(`⏰ ${formatForUser(input.dueAt, input.timezone)}`);
+  lines.push(
+    input.allDay
+      ? `📅 ${formatForUser(input.dueAt, input.timezone, true)}`
+      : `⏰ ${formatForUser(input.dueAt, input.timezone)}`,
+  );
   const repeat = describeRecurrence(input.recurrence, input.timezone);
   if (repeat) lines.push(`🔁 Repeats ${repeat}`);
   if (input.notes) lines.push('', `🗒 ${escapeHtml(input.notes)}`);

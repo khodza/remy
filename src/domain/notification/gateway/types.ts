@@ -13,6 +13,8 @@ export type SendReminderInput = {
   nudgeNumber?: number;
   /** When the task is due (snoozes included). */
   dueAt: Date;
+  /** A date without a time: shown as the date only. */
+  allDay?: boolean;
   /** IANA zone used to format times. */
   timezone: string;
   notes?: string | null;

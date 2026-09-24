@@ -188,7 +188,7 @@ export function describeRecurrence(
     }
   }
   if (recurrence.count !== undefined) {
-    label += recurrence.count === 1 ? ', once' : `, ${recurrence.count} times`;
+    label += ` × ${recurrence.count} ${recurrence.count === 1 ? 'time' : 'times'}`;
   }
   if (recurrence.until) {
     label += ` until ${formatInTimeZone(recurrence.until, timezone, 'd MMM yyyy')}`;

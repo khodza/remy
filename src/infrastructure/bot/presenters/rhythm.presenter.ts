@@ -253,7 +253,15 @@ export function presentWrap(wrap: WeeklyWrap): BotReply {
 
 function time(task: Task, tz: string, pattern: string): string {
   const due = effectiveDueAt(task);
-  return due ? formatInTimeZone(due, tz, pattern) : '—';
+  if (!due) return '—';
+  if (task.allDay) {
+    // The date part of the pattern, if any, then "all day" for the clock.
+    const datePart = pattern.replace(/\s*HH:mm/, '').trim();
+    return datePart
+      ? `${formatInTimeZone(due, tz, datePart)} all day`
+      : 'all day';
+  }
+  return formatInTimeZone(due, tz, pattern);
 }
 
 function marks(task: Task): string {

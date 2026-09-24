@@ -50,6 +50,7 @@ const reply = (over: Partial<AssistantModelOutput>): AssistantModelOutput => ({
 const draft = (over: Partial<AssistantModelOutput['tasks'][number]>) => ({
   title: 'x',
   due_local: null,
+  all_day: null,
   in_minutes: null,
   recurrence: null,
   priority: 'normal' as const,
@@ -93,6 +94,7 @@ describe('interpretAssistantOutput', () => {
           categoryName: null,
           leadMinutes: null,
           notes: null,
+          allDay: false,
         },
         {
           title: 'Call mom',
@@ -102,6 +104,7 @@ describe('interpretAssistantOutput', () => {
           categoryName: 'Personal',
           leadMinutes: null,
           notes: null,
+          allDay: false,
         },
         {
           title: 'Dentist',
@@ -111,6 +114,7 @@ describe('interpretAssistantOutput', () => {
           categoryName: null,
           leadMinutes: 30,
           notes: null,
+          allDay: false,
         },
       ],
     });
@@ -124,6 +128,7 @@ describe('interpretAssistantOutput', () => {
       by_weekday: [1, 4, 9],
       last_day_of_month: null,
       until_local: '2026-12-31T23:59:59',
+      count: null,
     };
     const result = interpretAssistantOutput(
       reply({
@@ -153,6 +158,137 @@ describe('interpretAssistantOutput', () => {
     });
   });
 
+  describe('"× N times" and all-day (2.4.0)', () => {
+    const daily = (count: number | null) => ({
+      type: 'daily' as const,
+      interval_days: null,
+      interval: null,
+      by_weekday: null,
+      last_day_of_month: null,
+      until_local: null,
+      count,
+    });
+    const created = (raw: AssistantModelOutput, text = ctx.text) => {
+      const r = interpretAssistantOutput(raw, { ...ctx, text });
+      if (r.intent !== 'create')
+        throw new Error(`expected create, got ${r.intent}`);
+      return r.tasks[0]!;
+    };
+
+    it('keeps a sane count and drops a nonsense one', () => {
+      const at = '2026-09-19T09:00:00';
+      expect(
+        created(
+          reply({
+            intent: 'create',
+            tasks: [
+              draft({ title: 'pills', due_local: at, recurrence: daily(5) }),
+            ],
+          }),
+        ).recurrence,
+      ).toEqual({ type: 'daily', count: 5 });
+      for (const bad of [0, -3, 5000]) {
+        expect(
+          created(
+            reply({
+              intent: 'create',
+              tasks: [
+                draft({
+                  title: 'pills',
+                  due_local: at,
+                  recurrence: daily(bad),
+                }),
+              ],
+            }),
+          ).recurrence,
+        ).toEqual({ type: 'daily' });
+      }
+    });
+
+    it('a date with no time is an all-day task at 09:00 local', () => {
+      const task = created(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'pay rent',
+              due_local: '2026-09-25T14:00:00', // the model picked an odd time
+              all_day: true,
+            }),
+          ],
+        }),
+        'pay rent on friday',
+      );
+      expect(task).toMatchObject({
+        allDay: true,
+        dueAt: new Date('2026-09-25T04:00:00Z'), // Fri 09:00 Tashkent
+      });
+    });
+
+    it('a clock time or a time of day in the message overrides all_day', () => {
+      for (const text of [
+        'pay rent friday at 5',
+        'pay rent friday evening',
+        'оплатить аренду в пятницу вечером',
+      ]) {
+        const task = created(
+          reply({
+            intent: 'create',
+            tasks: [
+              draft({
+                title: 'pay rent',
+                due_local: '2026-09-25T17:00:00',
+                all_day: true,
+              }),
+            ],
+          }),
+          text,
+        );
+        expect(task).toMatchObject({
+          allDay: false,
+          dueAt: new Date('2026-09-25T12:00:00Z'),
+        });
+      }
+    });
+
+    it('an all-day task for today is fine after 09:00; one for a day that is over is a question', () => {
+      const today = created(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'pay rent',
+              due_local: '2026-09-18T09:00:00',
+              all_day: true,
+            }),
+          ],
+        }),
+        'pay rent today',
+      );
+      expect(today).toMatchObject({
+        allDay: true,
+        dueAt: new Date('2026-09-18T04:00:00Z'),
+      });
+      const yesterday = interpretAssistantOutput(
+        reply({
+          intent: 'create',
+          tasks: [
+            draft({
+              title: 'pay rent',
+              due_local: '2026-09-17T09:00:00',
+              all_day: true,
+            }),
+          ],
+        }),
+        { ...ctx, text: 'pay rent yesterday' },
+      );
+      expect(yesterday).toMatchObject({
+        intent: 'unclear',
+        question: expect.stringContaining('already passed'),
+      });
+    });
+  });
+
   describe('safety nets for model slips', () => {
     const weekly = (by: number[] | null) => ({
       type: 'weekly' as const,
@@ -161,6 +297,7 @@ describe('interpretAssistantOutput', () => {
       by_weekday: by,
       last_day_of_month: null,
       until_local: null,
+      count: null,
     });
     const firstDue = (raw: AssistantModelOutput) => {
       const r = interpretAssistantOutput(raw, ctx);

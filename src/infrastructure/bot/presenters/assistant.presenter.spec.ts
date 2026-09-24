@@ -82,6 +82,51 @@ describe('presentAssistantResult', () => {
     expect(reply.html).toContain('✅ Dentist');
   });
 
+  it('an all-day task is shown as a date only, with a repeat count', () => {
+    const allDay = makeTask({
+      description: 'Pay rent',
+      scheduledAt: new Date('2026-09-25T04:00:00Z'), // Fri 09:00 Tashkent
+      timezone: tz,
+      allDay: true,
+      recurrence: { type: 'monthly', count: 3 },
+    });
+    const one = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [allDay] },
+      tz,
+      now,
+    );
+    expect(one.html).toContain('📅 Fri 25 Sep 2026 (all day)');
+    expect(one.html).toContain('Repeats every month × 3 times');
+    expect(one.html).not.toContain('09:00');
+
+    const many = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [allDay, allDay] },
+      tz,
+      now,
+    );
+    expect(many.html).toContain('<b>Pay rent</b> · Fri 25 Sep (all day)');
+
+    // In the agenda, "all day" takes the clock's place and it is not late
+    // during its own day.
+    const agenda = presentAssistantResult(
+      {
+        kind: 'agenda',
+        range: 'week',
+        search: null,
+        tasks: [
+          makeTask({
+            ...allDay,
+            scheduledAt: new Date('2026-09-18T04:00:00Z'), // today
+          }),
+        ],
+      },
+      tz,
+      now,
+    );
+    expect(agenda.html).toContain('1. <b>all day</b> Pay rent 🔁');
+    expect(agenda.html).not.toContain('late');
+  });
+
   it('every time is shown in the profile zone, whatever zone the task was made in', () => {
     const berlinTask = makeTask({
       description: 'Standup',

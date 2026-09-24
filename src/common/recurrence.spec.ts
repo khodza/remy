@@ -366,10 +366,10 @@ describe('count ("× N times")', () => {
 
   it('is described', () => {
     expect(describeRecurrence({ type: 'daily', count: 10 })).toBe(
-      'every day, 10 times',
+      'every day × 10 times',
     );
     expect(describeRecurrence({ type: 'weekly', count: 1 })).toBe(
-      'every week, once',
+      'every week × 1 time',
     );
   });
 });

@@ -111,6 +111,7 @@ describe('SendPendingRemindersUsecase', () => {
       description: 'Buy groceries',
       kind: 'due',
       dueAt: new Date('2026-04-16T11:30:00Z'), // the snooze, not the series time
+      allDay: false,
       timezone: 'Asia/Tashkent',
       notes: null,
       recurrence: { type: 'daily' },

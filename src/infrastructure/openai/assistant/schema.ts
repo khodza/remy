@@ -19,6 +19,7 @@ const recurrenceSchema = {
         'by_weekday',
         'last_day_of_month',
         'until_local',
+        'count',
       ],
       properties: {
         type: {
@@ -42,6 +43,7 @@ const recurrenceSchema = {
         },
         last_day_of_month: nullable('boolean'),
         until_local: nullable('string'),
+        count: nullable('integer'),
       },
     },
   ],
@@ -96,10 +98,12 @@ export const ASSISTANT_OUTPUT_SCHEMA = {
             'category',
             'lead_minutes',
             'notes',
+            'all_day',
           ],
           properties: {
             title: { type: 'string' },
             due_local: nullable('string'),
+            all_day: nullable('boolean'),
             in_minutes: nullable('integer'),
             recurrence: recurrenceSchema,
             priority: { type: 'string', enum: ['low', 'normal', 'high'] },

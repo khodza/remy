@@ -42,11 +42,13 @@ function repeatLine(recurrence: Recurrence | null | undefined): string {
 
 /** "⏰ Thu 16 Apr, 11:00", "(snoozed until …)" when delayed, "📥 no date" for todos. */
 function whenLine(
-  task: Pick<Task, 'scheduledAt' | 'snoozedUntil'>,
+  task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'allDay'>,
   timezone: string,
 ): string {
   if (task.scheduledAt === null) return '📥 no date';
-  const base = `⏰ ${formatForUserShort(task.scheduledAt, timezone)}`;
+  const base = task.allDay
+    ? `📅 ${formatForUserShort(task.scheduledAt, timezone, true)}`
+    : `⏰ ${formatForUserShort(task.scheduledAt, timezone)}`;
   return task.snoozedUntil
     ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, timezone)})`
     : base;

@@ -394,6 +394,7 @@ export class HandleMessageUsecase {
       notes,
       scheduledAt: draft.dueAt,
       timezone: input.timezone,
+      allDay: draft.allDay === true && draft.dueAt !== null,
       recurrence:
         draft.recurrence && draft.dueAt
           ? { ...draft.recurrence, anchorAt: draft.dueAt }

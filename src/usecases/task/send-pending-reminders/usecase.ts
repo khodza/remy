@@ -127,6 +127,7 @@ export class SendPendingRemindersUsecase {
           description: task.description,
           kind: ping,
           dueAt,
+          allDay: task.allDay,
           // Shown in the zone the user lives in now, not the one the task
           // was made in; the series itself keeps running on task.timezone.
           timezone: owner.timezone,
