@@ -15,6 +15,8 @@ import { escapeHtml } from '../html';
 import type { BotReply } from './assistant.presenter';
 
 const INBOX_NAME_MAX = 30;
+/** Calendar events listed in the brief before "…and N more". */
+export const BRIEF_MAX_EVENTS = 8;
 
 export function presentDigest(
   digest: Digest,
@@ -58,6 +60,8 @@ export function presentBrief(brief: MorningBrief): BotReply {
       lines.push(`   …and ${brief.today.length - today.length} more`);
     }
   }
+
+  lines.push(...calendarLines(brief, tz));
 
   const overdue = brief.overdue.slice(0, BRIEF_MAX_OVERDUE);
   if (overdue.length > 0) {
@@ -236,6 +240,26 @@ export function presentWrap(wrap: WeeklyWrap): BotReply {
     lines.push('📅 Nothing scheduled for the next 7 days yet.');
   }
   return { html: lines.join('\n') };
+}
+
+/**
+ * The day's Google Calendar events, all-day first, not numbered (replies
+ * act on tasks, not on events). Empty when nothing is connected.
+ */
+function calendarLines(brief: MorningBrief, tz: string): string[] {
+  const events = brief.calendarEvents ?? [];
+  if (events.length === 0) return [];
+  const lines = ['', `📅 <b>Calendar</b> · ${events.length}`];
+  for (const event of events.slice(0, BRIEF_MAX_EVENTS)) {
+    const when = event.allDay
+      ? 'All day'
+      : `${formatInTimeZone(event.start, tz, 'HH:mm')}–${formatInTimeZone(event.end, tz, 'HH:mm')}`;
+    lines.push(`• <b>${when}</b> ${escapeHtml(event.title)}`);
+  }
+  if (events.length > BRIEF_MAX_EVENTS) {
+    lines.push(`   …and ${events.length - BRIEF_MAX_EVENTS} more`);
+  }
+  return lines;
 }
 
 // ---------------------------------------------------------------- helpers ---
