@@ -45,4 +45,31 @@ describe('calendar feed token (real MongoDB)', () => {
     // Turning it off doesn't disturb other fields.
     expect((await users.findById(a.id))?.firstName).toBe('A');
   });
+
+  it('pinned agenda state round-trips and clears', async () => {
+    const u = await users.save({ telegramUserId: 3, firstName: 'C' });
+    expect(u.pinnedAgenda).toBeNull();
+    const updatedAt = new Date('2026-09-17T05:00:00Z');
+    const state = {
+      messageId: 500,
+      fingerprint: 'abc',
+      updatedAt,
+      dirty: false,
+    };
+    expect(
+      (await users.update({ id: u.id, pinnedAgenda: state })).pinnedAgenda,
+    ).toEqual(state);
+    expect(
+      (
+        await users.update({
+          id: u.id,
+          pinnedAgenda: { ...state, dirty: true },
+        })
+      ).pinnedAgenda,
+    ).toEqual({ ...state, dirty: true });
+    expect((await users.findById(u.id))?.pinnedAgenda?.dirty).toBe(true);
+    expect(
+      (await users.update({ id: u.id, pinnedAgenda: null })).pinnedAgenda,
+    ).toBeNull();
+  });
 });

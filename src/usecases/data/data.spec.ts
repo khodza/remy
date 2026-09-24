@@ -34,6 +34,8 @@ function mockNotifications(): jest.Mocked<NotificationGateway> {
     sendDigest: jest.fn(),
     sendDocument: jest.fn().mockResolvedValue(undefined),
     sendSourceLink: jest.fn(),
+    upsertPinnedAgenda: jest.fn(),
+    removePinnedAgenda: jest.fn(),
   };
 }
 

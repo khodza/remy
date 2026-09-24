@@ -12,6 +12,12 @@ export type UserDocument = {
   settings?: Partial<UserSettings> | null;
   categories?: Category[] | null;
   calendar_token?: string | null;
+  pinned_agenda?: {
+    message_id: number;
+    fingerprint: string;
+    updated_at: Date;
+    dirty: boolean;
+  } | null;
   /** Local dates (YYYY-MM-DD) the digests were last sent for. */
   last_brief_on?: string | null;
   last_review_on?: string | null;

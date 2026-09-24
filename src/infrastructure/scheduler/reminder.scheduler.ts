@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SendPendingRemindersUsecase } from '@usecases/task/send-pending-reminders';
-import { SendDailyDigestsUsecase } from '@usecases/rhythm';
+import {
+  RefreshPinnedAgendaUsecase,
+  SendDailyDigestsUsecase,
+} from '@usecases/rhythm';
 
 @Injectable()
 export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
@@ -14,6 +17,7 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
   constructor(
     private readonly sendPendingRemindersUsecase: SendPendingRemindersUsecase,
     private readonly sendDailyDigestsUsecase: SendDailyDigestsUsecase,
+    private readonly refreshPinnedAgenda: RefreshPinnedAgendaUsecase,
   ) {}
 
   onModuleInit() {
@@ -65,6 +69,13 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
       }
     } catch (error) {
       console.error('❌ [CRON] Error in digest scheduler:', error);
+    }
+    // Last: the pinned agenda shows whatever the two above changed, plus
+    // deferred edits and slots that turned overdue since the last tick.
+    try {
+      await this.refreshPinnedAgenda.executeAll();
+    } catch (error) {
+      console.error('❌ [CRON] Error in pinned agenda refresh:', error);
     }
   }
 }

@@ -70,5 +70,20 @@ export type WeeklyWrap = {
   busiestDay: { day: Date; count: number } | null;
 };
 
+/** The live "Today" message kept pinned in the chat (settings.pinnedAgenda). */
+export type PinnedAgenda = {
+  chatId: number;
+  /** The user's zone; every time is shown in it. */
+  timezone: string;
+  now: Date;
+  /** Pending reminders due today (local day), by time. */
+  today: Task[];
+  /** One-offs completed today, so the list shows what is already behind. */
+  doneToday: Task[];
+  /** Pending reminders due before today. */
+  overdueBefore: number;
+  inboxCount: number;
+};
+
 export type Digest = MorningBrief | EveningReview | WeeklyWrap;
 export type DigestKind = 'brief' | 'review' | 'wrap';

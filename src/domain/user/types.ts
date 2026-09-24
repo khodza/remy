@@ -101,6 +101,16 @@ export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [
   },
 ];
 
+/** The live "Today" message the bot keeps pinned in the chat. */
+export type PinnedAgendaState = {
+  messageId: number;
+  /** Hash of what the message shows, so unchanged agendas are not re-sent. */
+  fingerprint: string;
+  updatedAt: Date;
+  /** A change arrived inside the debounce window; the next tick redraws. */
+  dirty: boolean;
+};
+
 export type User = {
   id: string;
   telegramUserId: number;
@@ -119,6 +129,8 @@ export type User = {
    * Anyone with the link can read the feed, so it can be replaced.
    */
   calendarToken: string | null;
+  /** Null while the pinned agenda is off (or never drawn yet). */
+  pinnedAgenda: PinnedAgendaState | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -140,4 +152,6 @@ export type UpdateUserParams = {
   /** null = never set up (the defaults are created on next use). */
   categories?: Category[] | null;
   calendarToken?: string | null;
+  /** null = no pinned message any more. */
+  pinnedAgenda?: PinnedAgendaState | null;
 };

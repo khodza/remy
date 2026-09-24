@@ -13,9 +13,13 @@ import {
   NotificationFailedError,
   SourceMessageGoneError,
 } from '@domain/notification/errors';
-import type { Digest } from '@domain/rhythm';
+import type { Digest, PinnedAgenda } from '@domain/rhythm';
 import { TelegramBotService } from '../bot.service';
-import { presentDigest } from '../presenters/rhythm.presenter';
+import {
+  presentDigest,
+  presentPinnedAgenda,
+} from '../presenters/rhythm.presenter';
+import { isNotModifiedError } from '../telegram-safe';
 import { escapeHtml } from '../html';
 import { describeRecurrence } from '@common/recurrence';
 import { formatForUser } from '@common/format-date';
@@ -100,6 +104,66 @@ export class NotificationGatewayImpl implements NotificationGateway {
     }
   }
 
+  public async upsertPinnedAgenda(
+    agenda: PinnedAgenda,
+    messageId: number | null,
+  ): Promise<SentReminder> {
+    const api = this.botService.getBot().api;
+    const html = presentPinnedAgenda(agenda);
+    if (messageId !== null) {
+      try {
+        await api.editMessageText(agenda.chatId, messageId, html, {
+          parse_mode: 'HTML',
+        });
+        return { messageId };
+      } catch (error) {
+        if (isNotModifiedError(error)) return { messageId };
+        // The message was deleted (or can no longer be edited): a new one
+        // takes its place below. Anything else is a real failure.
+        if (!isMessageGoneError(error)) {
+          throw new NotificationFailedError(
+            'Failed to redraw the pinned agenda',
+            error,
+            { permanent: isPermanent(error) },
+          );
+        }
+        await api
+          .unpinChatMessage(agenda.chatId, messageId)
+          .catch(() => undefined);
+      }
+    }
+    try {
+      const sent = await api.sendMessage(agenda.chatId, html, {
+        parse_mode: 'HTML',
+        disable_notification: true,
+      });
+      // Pinning needs no rights in a private chat, but a failed pin must
+      // not lose the message: the next redraw edits it either way.
+      await api
+        .pinChatMessage(agenda.chatId, sent.message_id, {
+          disable_notification: true,
+        })
+        .catch(() => undefined);
+      return { messageId: sent.message_id };
+    } catch (error) {
+      throw new NotificationFailedError(
+        'Failed to send the pinned agenda',
+        error,
+        { permanent: isPermanent(error) },
+      );
+    }
+  }
+
+  public async removePinnedAgenda(
+    chatId: number,
+    messageId: number,
+  ): Promise<void> {
+    const api = this.botService.getBot().api;
+    // Best effort on both: the user may have unpinned or deleted it already.
+    await api.unpinChatMessage(chatId, messageId).catch(() => undefined);
+    await api.deleteMessage(chatId, messageId).catch(() => undefined);
+  }
+
   public async sendSourceLink(
     input: SendSourceLinkInput,
   ): Promise<SentReminder> {
@@ -140,6 +204,24 @@ export class NotificationGatewayImpl implements NotificationGateway {
       );
     }
   }
+}
+
+function isPermanent(error: unknown): boolean {
+  return (
+    error instanceof GrammyError &&
+    (error.error_code === 400 || error.error_code === 403)
+  );
+}
+
+/** "message to edit not found" / "message can't be edited": send a new one. */
+function isMessageGoneError(error: unknown): boolean {
+  return (
+    error instanceof GrammyError &&
+    error.error_code === 400 &&
+    /message (to edit )?not found|can't be edited|MESSAGE_ID_INVALID/i.test(
+      error.description,
+    )
+  );
 }
 
 export function reminderText(input: SendReminderInput, now: Date): string {

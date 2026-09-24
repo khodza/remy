@@ -7,6 +7,7 @@ import {
   taskIdsOf,
   type HandleMessageInput,
 } from '@usecases/assistant';
+import { RefreshPinnedAgendaUsecase } from '@usecases/rhythm';
 import { presentAssistantResult } from './presenters/assistant.presenter';
 import { escapeHtml } from './html';
 import { resolveTimezone } from './user-input';
@@ -26,7 +27,10 @@ export type RespondOptions = Pick<
  */
 @Injectable()
 export class AssistantResponder {
-  constructor(private readonly handleMessage: HandleMessageUsecase) {}
+  constructor(
+    private readonly handleMessage: HandleMessageUsecase,
+    private readonly pinnedAgenda: RefreshPinnedAgendaUsecase,
+  ) {}
 
   public async respond(
     ctx: Context,
@@ -62,6 +66,11 @@ export class AssistantResponder {
           : '❌ Something went wrong and nothing was changed. Please try again.',
       );
       return;
+    }
+
+    // Anything but talk may have changed today's picture.
+    if (result.kind !== 'chat' && result.kind !== 'question') {
+      this.pinnedAgenda.refreshSoon({ userId: user.id });
     }
 
     const reply = presentAssistantResult(result, timezone);

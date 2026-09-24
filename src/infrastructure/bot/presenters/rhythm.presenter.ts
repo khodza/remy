@@ -4,17 +4,21 @@ import type { Task } from '@domain/task';
 import type {
   Digest,
   MorningBrief,
+  PinnedAgenda,
   ReviewItem,
   ReviewState,
   WeeklyWrap,
 } from '@domain/rhythm';
 import { effectiveDueAt } from '@common/fire-time';
+import { isTaskOverdue } from '@common/all-day';
 import { getEnv } from '@common/config';
 import { BRIEF_MAX_OVERDUE, BRIEF_MAX_TODAY } from '@usecases/rhythm';
 import { escapeHtml } from '../html';
 import type { BotReply } from './assistant.presenter';
 
 const INBOX_NAME_MAX = 30;
+/** Lines of tasks in the pinned agenda; the rest is "…and N more". */
+export const PINNED_AGENDA_MAX_LINES = 20;
 
 export function presentDigest(
   digest: Digest,
@@ -28,6 +32,54 @@ export function presentDigest(
     case 'wrap':
       return presentWrap(digest);
   }
+}
+
+// ---------------------------------------------------------- pinned agenda ---
+
+/**
+ * The live "Today" message. Done one-offs stay in the list, struck through,
+ * so the day reads as a whole; an overdue slot is marked red. No keyboard:
+ * the message is edited in place, taps belong to the reminders.
+ */
+export function presentPinnedAgenda(agenda: PinnedAgenda): string {
+  const tz = agenda.timezone;
+  const lines: string[] = [
+    `📌 <b>Today</b> · ${formatInTimeZone(agenda.now, tz, 'EEE d MMM')} · <i>updated ${formatInTimeZone(agenda.now, tz, 'HH:mm')}</i>`,
+    '',
+  ];
+  const entries = [
+    ...agenda.today.map((task) => ({ task, done: false })),
+    ...agenda.doneToday.map((task) => ({ task, done: true })),
+  ].sort(
+    (a, b) =>
+      (effectiveDueAt(a.task)?.getTime() ?? 0) -
+      (effectiveDueAt(b.task)?.getTime() ?? 0),
+  );
+  if (entries.length === 0) {
+    lines.push('Nothing scheduled for today.');
+  } else {
+    for (const { task, done } of entries.slice(0, PINNED_AGENDA_MAX_LINES)) {
+      const clock = task.allDay ? 'all day' : time(task, tz, 'HH:mm');
+      const title = escapeHtml(task.description);
+      if (done) {
+        lines.push(`✅ <s>${clock} ${title}</s>`);
+      } else if (isTaskOverdue(task, agenda.now)) {
+        lines.push(`🔴 <b>${clock}</b> ${title}${marks(task)}`);
+      } else {
+        lines.push(`<b>${clock}</b> ${title}${marks(task)}`);
+      }
+    }
+    if (entries.length > PINNED_AGENDA_MAX_LINES) {
+      lines.push(`…and ${entries.length - PINNED_AGENDA_MAX_LINES} more`);
+    }
+  }
+  const footer: string[] = [];
+  if (agenda.overdueBefore > 0)
+    footer.push(`🔴 ${agenda.overdueBefore} overdue from before today`);
+  if (agenda.inboxCount > 0)
+    footer.push(`📥 ${agenda.inboxCount} in the Inbox`);
+  if (footer.length > 0) lines.push('', footer.join(' · '));
+  return lines.join('\n');
 }
 
 // ------------------------------------------------------------------ brief ---

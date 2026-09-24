@@ -7,7 +7,12 @@ import {
   TaskStatus,
 } from '@domain/task/repository';
 import type { User } from '@domain/user';
-import type { EveningReview, MorningBrief, WeeklyWrap } from '@domain/rhythm';
+import type {
+  EveningReview,
+  MorningBrief,
+  PinnedAgenda,
+  WeeklyWrap,
+} from '@domain/rhythm';
 import { Domain } from '@common/tokens';
 import { dayBoundsInZone } from '@common/day-bounds';
 import { effectiveDueAt } from '@common/fire-time';
@@ -62,6 +67,52 @@ export class DigestBuilder {
       inbox: inbox.slice(0, INBOX_PREVIEW),
       inboxCount: inbox.length,
       scheduled,
+    };
+  }
+
+  public async buildPinnedAgenda(
+    user: User,
+    timezone: string,
+    now: Date,
+  ): Promise<PinnedAgenda> {
+    const { start, end } = dayBoundsInZone(now, timezone);
+    const pending = { userId: user.id, statuses: [TaskStatus.Pending] };
+    const lastOfYesterday = new Date(start.getTime() - 1);
+    const [today, done, overdue, inbox] = await Promise.all([
+      this.tasks.find({
+        ...pending,
+        kind: 'reminder',
+        dueAfter: lastOfYesterday,
+        dueAtOrBefore: new Date(end.getTime() - 1),
+        sort: 'dueAt',
+      }),
+      this.tasks.find({
+        userId: user.id,
+        statuses: [TaskStatus.Completed],
+        kind: 'reminder',
+        completedAtOrAfter: start,
+        sort: 'dueAt',
+      }),
+      this.tasks.find({
+        ...pending,
+        kind: 'reminder',
+        dueAtOrBefore: lastOfYesterday,
+        sort: 'dueAt',
+      }),
+      this.tasks.find({ ...pending, kind: 'todo', sort: 'createdAtDesc' }),
+    ]);
+    return {
+      chatId: user.telegramUserId,
+      timezone,
+      now,
+      today,
+      // Only what was due today: a done task from last week is not today's.
+      doneToday: done.filter((task) => {
+        const due = effectiveDueAt(task);
+        return due !== null && due >= start && due < end;
+      }),
+      overdueBefore: overdue.length,
+      inboxCount: inbox.length,
     };
   }
 

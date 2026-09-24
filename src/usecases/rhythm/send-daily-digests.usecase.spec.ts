@@ -80,6 +80,8 @@ describe('SendDailyDigestsUsecase', () => {
       sendDigest: jest.fn().mockResolvedValue({ messageId: 700 }),
       sendDocument: jest.fn(),
       sendSourceLink: jest.fn(),
+      upsertPinnedAgenda: jest.fn(),
+      removePinnedAgenda: jest.fn(),
     };
     const usecase = new SendDailyDigestsUsecase(
       users,

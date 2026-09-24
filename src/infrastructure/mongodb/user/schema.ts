@@ -14,6 +14,18 @@ export const UserSchema = new Schema<UserDocument>(
     last_wrap_on: { type: String, default: null },
     settings: { type: Schema.Types.Mixed, default: null },
     calendar_token: { type: String, default: null },
+    pinned_agenda: {
+      type: new Schema(
+        {
+          message_id: { type: Number, required: true },
+          fingerprint: { type: String, required: true },
+          updated_at: { type: Date, required: true },
+          dirty: { type: Boolean, default: false },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     categories: {
       type: [
         new Schema(

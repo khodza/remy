@@ -48,6 +48,8 @@ describe('SendPendingRemindersUsecase', () => {
       sendDigest: jest.fn(),
       sendDocument: jest.fn(),
       sendSourceLink: jest.fn(),
+      upsertPinnedAgenda: jest.fn(),
+      removePinnedAgenda: jest.fn(),
     };
     conversations = mockConversationRepository();
     const users = mockUserRepository(

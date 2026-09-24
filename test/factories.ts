@@ -90,6 +90,7 @@ export function makeUser(overrides: Partial<User> = {}): User {
     settings: structuredClone(DEFAULT_USER_SETTINGS),
     categories: null,
     calendarToken: null,
+    pinnedAgenda: null,
     createdAt,
     updatedAt: createdAt,
     ...overrides,
@@ -141,6 +142,9 @@ export function mockUserRepository(
           : {}),
         ...(params.calendarToken !== undefined
           ? { calendarToken: params.calendarToken }
+          : {}),
+        ...(params.pinnedAgenda !== undefined
+          ? { pinnedAgenda: params.pinnedAgenda }
           : {}),
       };
       return user;

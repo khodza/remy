@@ -22,6 +22,7 @@ import { ignoreNotModified } from '../telegram-safe';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
 import {
   MoveOverdueToTodayUsecase,
+  RefreshPinnedAgendaUsecase,
   ResolveReviewItemUsecase,
   type ReviewAction,
 } from '@usecases/rhythm';
@@ -59,6 +60,7 @@ export class CallbackHandler {
     private readonly resolveReview: ResolveReviewItemUsecase,
     private readonly moveOverdue: MoveOverdueToTodayUsecase,
     private readonly commands: CommandHandler,
+    private readonly pinnedAgenda: RefreshPinnedAgendaUsecase,
     @Inject(Domain.Task.Repository)
     private readonly taskRepository: TaskRepository,
     @Inject(Domain.Conversation.Repository)
@@ -81,6 +83,10 @@ export class CallbackHandler {
     await ctx
       .answerCallbackQuery(toast ? { text: toast } : {})
       .catch(() => undefined);
+    // Most taps change a task; the agenda decides whether anything moved.
+    if (ctx.from && data !== 'noop' && !data.startsWith(LIST_CALLBACK_PREFIX)) {
+      this.pinnedAgenda.refreshSoon({ telegramUserId: ctx.from.id });
+    }
   }
 
   private async dispatch(ctx: Context, data: string): Promise<Toast> {

@@ -1,10 +1,12 @@
 import {
   briefKeyboard,
+  PINNED_AGENDA_MAX_LINES,
   presentBrief,
+  presentPinnedAgenda,
   presentReview,
   presentWrap,
 } from './rhythm.presenter';
-import type { MorningBrief, ReviewState } from '@domain/rhythm';
+import type { MorningBrief, PinnedAgenda, ReviewState } from '@domain/rhythm';
 import { makeTask } from '@test/factories';
 
 const tz = 'Asia/Tashkent';
@@ -12,6 +14,85 @@ const buttons = (reply: {
   keyboard?: { inline_keyboard: { text: string }[][] };
 }) =>
   (reply.keyboard?.inline_keyboard ?? []).map((row) => row.map((b) => b.text));
+
+describe('presentPinnedAgenda', () => {
+  const agenda: PinnedAgenda = {
+    chatId: 42,
+    timezone: tz,
+    now: new Date('2026-09-17T05:00:00Z'), // Thu 10:00 local
+    today: [
+      makeTask({
+        description: 'Standup <dev>',
+        scheduledAt: new Date('2026-09-17T04:30:00Z'), // 09:30, overdue
+        recurrence: { type: 'weekdays' },
+        timezone: tz,
+      }),
+      makeTask({
+        description: 'Dentist',
+        scheduledAt: new Date('2026-09-17T10:00:00Z'), // 15:00
+        priority: 'high',
+        timezone: tz,
+      }),
+      makeTask({
+        description: 'Pay rent',
+        scheduledAt: new Date('2026-09-17T04:00:00Z'),
+        allDay: true,
+        timezone: tz,
+      }),
+    ],
+    doneToday: [
+      makeTask({
+        description: 'Gym',
+        scheduledAt: new Date('2026-09-17T02:00:00Z'), // 07:00
+        status: 'completed' as never,
+        timezone: tz,
+      }),
+    ],
+    overdueBefore: 2,
+    inboxCount: 3,
+  };
+
+  it('header with the day and the update clock, done struck through, overdue red, footer counts', () => {
+    const html = presentPinnedAgenda(agenda);
+    expect(html.split('\n')).toEqual([
+      '📌 <b>Today</b> · Thu 17 Sep · <i>updated 10:00</i>',
+      '',
+      '✅ <s>07:00 Gym</s>',
+      '<b>all day</b> Pay rent',
+      '🔴 <b>09:30</b> Standup &lt;dev&gt; 🔁',
+      '<b>15:00</b> Dentist ❗',
+      '',
+      '🔴 2 overdue from before today · 📥 3 in the Inbox',
+    ]);
+  });
+
+  it('an empty day says so; no footer when there is nothing to count', () => {
+    const html = presentPinnedAgenda({
+      ...agenda,
+      today: [],
+      doneToday: [],
+      overdueBefore: 0,
+      inboxCount: 0,
+    });
+    expect(html).toBe(
+      '📌 <b>Today</b> · Thu 17 Sep · <i>updated 10:00</i>\n\nNothing scheduled for today.',
+    );
+  });
+
+  it('caps a long day', () => {
+    const today = Array.from({ length: PINNED_AGENDA_MAX_LINES + 3 }, (_, i) =>
+      makeTask({
+        id: `t${i}`,
+        description: `Task ${i}`,
+        scheduledAt: new Date(Date.UTC(2026, 8, 17, 6, i)),
+        timezone: tz,
+      }),
+    );
+    const html = presentPinnedAgenda({ ...agenda, today, doneToday: [] });
+    expect(html).toContain('…and 3 more');
+    expect(html).not.toContain('Task 21');
+  });
+});
 
 describe('presentBrief', () => {
   const brief: MorningBrief = {

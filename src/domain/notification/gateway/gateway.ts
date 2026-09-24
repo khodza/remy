@@ -1,4 +1,4 @@
-import type { Digest } from '@domain/rhythm';
+import type { Digest, PinnedAgenda } from '@domain/rhythm';
 import {
   SendDocumentInput,
   SendReminderInput,
@@ -17,4 +17,15 @@ export interface NotificationGateway {
    * SourceMessageGoneError when that message no longer exists.
    */
   sendSourceLink(input: SendSourceLinkInput): Promise<SentReminder>;
+  /**
+   * Redraws the pinned "Today" message, or sends and pins a new one when
+   * there is none yet or the old one is gone. Returns the id that now
+   * holds it.
+   */
+  upsertPinnedAgenda(
+    agenda: PinnedAgenda,
+    messageId: number | null,
+  ): Promise<SentReminder>;
+  /** Unpins and deletes the pinned agenda; a message already gone is fine. */
+  removePinnedAgenda(chatId: number, messageId: number): Promise<void>;
 }
