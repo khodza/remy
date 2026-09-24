@@ -90,6 +90,29 @@ export const envSchema = z
      * used from a plain browser. Refused in production.
      */
     DEV_ALLOW_MOCK_INITDATA: boolish.default(false),
+
+    /**
+     * Google Calendar (read events into the morning brief). All three are
+     * needed to turn it on; without them the feature reports "not
+     * configured". The redirect URL is this API's public callback, e.g.
+     * https://remy.example.com/api/v1/integrations/google/callback.
+     */
+    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    GOOGLE_REDIRECT_URL: z
+      .string()
+      .url()
+      .refine(
+        (u) => u.startsWith('https://') || u.startsWith('http://localhost'),
+        'must be an https URL (http only for localhost)',
+      )
+      .optional(),
+    /**
+     * Key the stored Google tokens are encrypted with (any string, 32+
+     * chars). Defaults to a key derived from JWT_SECRET; set it to rotate
+     * JWT_SECRET without losing the Google connection.
+     */
+    GOOGLE_TOKEN_KEY: z.string().min(32).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV !== 'production') return;
