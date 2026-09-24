@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import { EnsureUserUsecase } from '@usecases/user/ensure-user';
 import { ListTasksUsecase } from '@usecases/task/list-tasks';
@@ -89,6 +89,7 @@ export function whenLine(
 
 @Injectable()
 export class CommandHandler {
+  private readonly logger = new Logger(CommandHandler.name);
   constructor(
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly listTasksUsecase: ListTasksUsecase,
@@ -114,7 +115,7 @@ export class CommandHandler {
         ...(reply.keyboard ? { reply_markup: reply.keyboard } : {}),
       });
     } catch (error) {
-      console.error('Failed to handle lists command:', error);
+      this.logger.error('Failed to handle lists command', error);
       await ctx.reply('❌ Failed to load your lists. Please try again.');
     }
   }
@@ -151,7 +152,7 @@ export class CommandHandler {
           kind: 'agenda',
         })
         .catch((error: unknown) =>
-          console.error('Failed to link the list message:', error),
+          this.logger.error('Failed to link the list message', error),
         );
     }
   }
@@ -168,7 +169,7 @@ export class CommandHandler {
       if (result.tasks === 0)
         await ctx.reply('Nothing to export yet: you have no reminders.');
     } catch (error) {
-      console.error('Export failed:', error);
+      this.logger.error('Export failed', error);
       await ctx.reply('❌ Could not build the export. Try again in a minute.');
     }
   }
@@ -199,10 +200,10 @@ export class CommandHandler {
           kind: 'agenda',
         })
         .catch((error: unknown) =>
-          console.error('Failed to link /today:', error),
+          this.logger.error('Failed to link /today', error),
         );
     } catch (error) {
-      console.error('Failed to handle today command:', error);
+      this.logger.error('Failed to handle today command', error);
       await ctx.reply('❌ Failed to load your day. Please try again.');
     }
   }
@@ -253,7 +254,7 @@ export class CommandHandler {
         },
       );
     } catch (error) {
-      console.error('Failed to handle start command:', error);
+      this.logger.error('Failed to handle start command', error);
       await ctx.reply('❌ Something went wrong. Please try again.');
     }
   }
@@ -328,7 +329,7 @@ export class CommandHandler {
         }
       }
     } catch (error) {
-      console.error('Failed to handle list command:', error);
+      this.logger.error('Failed to handle list command', error);
       await ctx.reply('❌ Failed to fetch tasks. Please try again.');
     }
   }
@@ -367,7 +368,7 @@ export class CommandHandler {
 
       await ctx.reply('Select a task to delete:', { reply_markup: keyboard });
     } catch (error) {
-      console.error('Failed to handle delete command:', error);
+      this.logger.error('Failed to handle delete command', error);
       await ctx.reply('❌ Failed to load tasks. Please try again.');
     }
   }
@@ -423,7 +424,7 @@ export class CommandHandler {
         },
       );
     } catch (error) {
-      console.error('Failed to handle settings command:', error);
+      this.logger.error('Failed to handle settings command', error);
       await ctx.reply('❌ Failed to load settings. Please try again.');
     }
   }

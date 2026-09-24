@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import type { Message, MessageOrigin } from 'grammy/types';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -18,6 +18,7 @@ const VOICE_MAX_BYTES = 20 * 1024 * 1024;
 
 @Injectable()
 export class MessageHandler {
+  private readonly logger = new Logger(MessageHandler.name);
   constructor(
     private readonly ensureUserUsecase: EnsureUserUsecase,
     private readonly handleMessage: HandleMessageUsecase,
@@ -114,7 +115,7 @@ export class MessageHandler {
         mimeType: voice.mime_type ?? 'audio/ogg',
       }));
     } catch (error) {
-      console.error('Failed to transcribe voice message:', error);
+      this.logger.error('Failed to transcribe voice message', error);
       await ctx.reply(
         '❌ I could not make out that voice message. Please try again, a little closer to the mic.',
       );

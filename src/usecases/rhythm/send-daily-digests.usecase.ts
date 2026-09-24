@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { formatInTimeZone } from 'date-fns-tz';
 import type { SpeechGateway } from '@domain/ai/gateway/speech';
 import type { ConversationRepository } from '@domain/conversation';
@@ -24,6 +24,7 @@ export type SendDailyDigestsOutput = { sent: number; failed: number };
  */
 @Injectable()
 export class SendDailyDigestsUsecase {
+  private readonly logger = new Logger(SendDailyDigestsUsecase.name);
   constructor(
     @Inject(Domain.User.Repository)
     private readonly users: UserRepository,
@@ -47,7 +48,7 @@ export class SendDailyDigestsUsecase {
     try {
       users = await this.users.listAll();
     } catch (error) {
-      console.error('Failed to list users for digests:', error);
+      this.logger.error('Failed to list users for digests', error);
       return { sent, failed };
     }
 
@@ -57,7 +58,7 @@ export class SendDailyDigestsUsecase {
           if (await this.sendOne(user, kind, now)) sent++;
         } catch (error) {
           // One failed digest must not stop the others.
-          console.error(`Failed to send ${kind} to user ${user.id}:`, error);
+          this.logger.error(`Failed to send ${kind} to user ${user.id}`, error);
           failed++;
         }
       }
@@ -88,7 +89,7 @@ export class SendDailyDigestsUsecase {
         await this.users
           .releaseDigest(user.id, kind, day)
           .catch((e: unknown) =>
-            console.error(`Failed to release the ${kind} claim:`, e),
+            this.logger.error(`Failed to release the ${kind} claim`, e),
           );
       }
       throw error;
@@ -154,7 +155,7 @@ export class SendDailyDigestsUsecase {
         audio,
       });
     } catch (error) {
-      console.error(`Voice brief for user ${user.id} skipped:`, error);
+      this.logger.error(`Voice brief for user ${user.id} skipped`, error);
     }
   }
 }

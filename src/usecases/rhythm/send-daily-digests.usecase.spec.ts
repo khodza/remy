@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NotificationFailedError } from '@domain/notification/errors';
 import {
   SendDailyDigestsUsecase,
@@ -101,7 +102,9 @@ describe('SendDailyDigestsUsecase', () => {
     return { tasks, users, conversations, notifications, speech, usecase };
   }
 
-  beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}));
+  beforeEach(() =>
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {}),
+  );
   afterEach(() => jest.restoreAllMocks());
 
   it('sends the brief once per local day and links its numbered tasks in display order', async () => {

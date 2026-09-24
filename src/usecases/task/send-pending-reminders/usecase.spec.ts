@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { SendPendingRemindersUsecase } from './usecase';
 import type { TaskRepository } from '@domain/task/repository';
 import type { NotificationGateway } from '@domain/notification/gateway';
@@ -69,7 +70,7 @@ describe('SendPendingRemindersUsecase', () => {
 
   beforeEach(() => {
     jest.useFakeTimers({ now });
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     setup();
   });
 

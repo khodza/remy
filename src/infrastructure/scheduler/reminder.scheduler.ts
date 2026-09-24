@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   OnApplicationShutdown,
   OnModuleInit,
 } from '@nestjs/common';
@@ -12,6 +13,7 @@ import {
 
 @Injectable()
 export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
+  private readonly logger = new Logger(ReminderScheduler.name);
   private inFlight: Promise<void> | null = null;
 
   constructor(
@@ -21,7 +23,9 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
   ) {}
 
   onModuleInit() {
-    console.log('✅ ReminderScheduler registered (every minute)');
+    this.logger.log(
+      'Registered: reminders, digests and the pinned agenda every minute',
+    );
   }
 
   // Sends are sequential, so a slow run can outlast a minute; overlapping
@@ -39,7 +43,7 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
   /** Let a run that is mid-send finish before the process exits. */
   public async onApplicationShutdown(): Promise<void> {
     if (this.inFlight) {
-      console.log('⏳ Waiting for the current reminder run to finish...');
+      this.logger.log('Waiting for the current reminder run to finish');
       await this.inFlight.catch(() => undefined);
     }
   }
@@ -52,30 +56,30 @@ export class ReminderScheduler implements OnModuleInit, OnApplicationShutdown {
         result.failedCount > 0 ||
         result.heldCount > 0
       ) {
-        console.log(
-          `📊 [CRON] Reminders sent: ${result.sentCount}, failed: ${result.failedCount}, held for quiet hours: ${result.heldCount}`,
+        this.logger.log(
+          `Reminders sent: ${result.sentCount}, failed: ${result.failedCount}, held for quiet hours: ${result.heldCount}`,
         );
       }
     } catch (error) {
-      console.error('❌ [CRON] Error in reminder scheduler:', error);
+      this.logger.error('Reminder run failed', error);
     }
     // Separate try: a failing digest must not stop reminders, and vice versa.
     try {
       const digests = await this.sendDailyDigestsUsecase.execute();
       if (digests.sent > 0 || digests.failed > 0) {
-        console.log(
-          `📰 [CRON] Digests sent: ${digests.sent}, failed: ${digests.failed}`,
+        this.logger.log(
+          `Digests sent: ${digests.sent}, failed: ${digests.failed}`,
         );
       }
     } catch (error) {
-      console.error('❌ [CRON] Error in digest scheduler:', error);
+      this.logger.error('Digest run failed', error);
     }
     // Last: the pinned agenda shows whatever the two above changed, plus
     // deferred edits and slots that turned overdue since the last tick.
     try {
       await this.refreshPinnedAgenda.executeAll();
     } catch (error) {
-      console.error('❌ [CRON] Error in pinned agenda refresh:', error);
+      this.logger.error('Pinned agenda refresh failed', error);
     }
   }
 }

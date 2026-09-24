@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Context, InlineKeyboard } from 'grammy';
 import { MarkCompleteUsecase } from '@usecases/task/mark-complete';
 import { DelayTaskUsecase } from '@usecases/task/delay-task';
@@ -48,6 +48,7 @@ const FORWARD_ANSWERS: Record<string, string> = {
 
 @Injectable()
 export class CallbackHandler {
+  private readonly logger = new Logger(CallbackHandler.name);
   constructor(
     private readonly markCompleteUsecase: MarkCompleteUsecase,
     private readonly delayTaskUsecase: DelayTaskUsecase,
@@ -77,7 +78,7 @@ export class CallbackHandler {
     try {
       toast = await this.dispatch(ctx, data);
     } catch (error) {
-      console.error('Failed to handle callback:', error);
+      this.logger.error('Failed to handle callback', error);
       toast = '❌ Action failed';
     }
     await ctx
@@ -416,7 +417,7 @@ export class CallbackHandler {
         kind: 'confirmation',
       })
       .catch((error: unknown) =>
-        console.error('Failed to link moved tasks:', error),
+        this.logger.error('Failed to link moved tasks', error),
       );
     return `⏭ Moved ${result.tasks.length} to today`;
   }

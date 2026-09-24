@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { Context } from 'grammy';
 import type { User } from '@domain/user';
 import { InterpretationFailedError } from '@domain/assistant';
@@ -27,6 +27,7 @@ export type RespondOptions = Pick<
  */
 @Injectable()
 export class AssistantResponder {
+  private readonly logger = new Logger(AssistantResponder.name);
   constructor(
     private readonly handleMessage: HandleMessageUsecase,
     private readonly pinnedAgenda: RefreshPinnedAgendaUsecase,
@@ -59,7 +60,7 @@ export class AssistantResponder {
           : {}),
       });
     } catch (error) {
-      console.error('Assistant failed:', error);
+      this.logger.error('Assistant failed', error);
       await ctx.reply(
         error instanceof InterpretationFailedError
           ? '🧠 I could not think just now (the AI service did not answer). Nothing was changed; please send that again in a moment.'
@@ -95,7 +96,7 @@ export class AssistantResponder {
           result.kind === 'agenda' ? 'agenda' : 'confirmation',
         )
         .catch((error: unknown) =>
-          console.error('Failed to link reply:', error),
+          this.logger.error('Failed to link reply', error),
         );
     }
   }

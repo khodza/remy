@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { addMinutes } from 'date-fns';
 import { TaskRepository } from '@domain/task/repository';
 import { NotificationGateway } from '@domain/notification/gateway';
@@ -44,6 +44,7 @@ type Owner = { settings: UserSettings; timezone: string };
 
 @Injectable()
 export class SendPendingRemindersUsecase {
+  private readonly logger = new Logger(SendPendingRemindersUsecase.name);
   constructor(
     @Inject(Domain.Task.Repository)
     private readonly taskRepository: TaskRepository,
@@ -73,7 +74,7 @@ export class SendPendingRemindersUsecase {
         // can never send the same task.
         claimed = await this.taskRepository.claimDueReminder(now);
       } catch (error) {
-        console.error('Failed to claim a due reminder:', error);
+        this.logger.error('Failed to claim a due reminder', error);
         break;
       }
       if (!claimed) break;
@@ -155,14 +156,14 @@ export class SendPendingRemindersUsecase {
               kind: 'reminder',
             })
             .catch((linkError: unknown) => {
-              console.error(
-                `Failed to link reminder message for task ${task.id}:`,
+              this.logger.error(
+                `Failed to link reminder message for task ${task.id}`,
                 linkError,
               );
             });
         }
       } catch (error) {
-        console.error(`Failed to send reminder for task ${task.id}:`, error);
+        this.logger.error(`Failed to send reminder for task ${task.id}`, error);
         failedCount++;
 
         // Permanent failures (blocked bot, chat gone) keep the claim so we
@@ -186,8 +187,8 @@ export class SendPendingRemindersUsecase {
             );
           }
         } catch (releaseError) {
-          console.error(
-            `Failed to release claim on task ${task.id}:`,
+          this.logger.error(
+            `Failed to release claim on task ${task.id}`,
             releaseError,
           );
         }
@@ -234,8 +235,8 @@ export class SendPendingRemindersUsecase {
       });
     } catch (error) {
       // The reminder itself went out; losing a nudge is acceptable.
-      console.error(
-        `Failed to schedule the next nudge for task ${task.id}:`,
+      this.logger.error(
+        `Failed to schedule the next nudge for task ${task.id}`,
         error,
       );
     }
@@ -287,11 +288,11 @@ export class SendPendingRemindersUsecase {
             snoozedUntil: null,
           });
         } catch (error) {
-          console.error(`Failed to roll over task ${task.id}:`, error);
+          this.logger.error(`Failed to roll over task ${task.id}`, error);
         }
       }
     } catch (error) {
-      console.error('Failed to fetch overdue recurring tasks:', error);
+      this.logger.error('Failed to fetch overdue recurring tasks', error);
     }
   }
 }
