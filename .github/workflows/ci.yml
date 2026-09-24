@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: 0
+  # Pin here if mongodb-memory-server's default ever disappears from
+  # fastdl.mongodb.org (the message is "Status Code is 403").
+  # MONGOMS_VERSION: 8.0.4
+
+jobs:
+  checks:
+    name: typecheck, lint, tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint:check
+      - run: npm test
+
+      # test:int and test:e2e start a real MongoDB through
+      # mongodb-memory-server. The binary is kept out of node_modules so it
+      # survives `npm ci` and can be cached between runs.
+      - name: Point mongodb-memory-server at a cacheable directory
+        run: echo "MONGOMS_DOWNLOAD_DIR=$HOME/.cache/mongodb-binaries" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ env.MONGOMS_VERSION }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            mongodb-binaries-${{ runner.os }}-${{ env.MONGOMS_VERSION }}-
+
+      - run: npm run test:int
+      - run: npm run test:e2e
+
+  contract:
+    name: frontend contract copy is in sync
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: remy
+
+      # The Mini App keeps a generated copy of src/contract/remy-contract.ts.
+      # Set the repository variable REMY_WEBAPP_REPO when the frontend does
+      # not live at <owner>/remy-webapp, and the secret REMY_WEBAPP_TOKEN
+      # (a read-only PAT) when it is private.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.REMY_WEBAPP_REPO || format('{0}/remy-webapp', github.repository_owner) }}
+          token: ${{ secrets.REMY_WEBAPP_TOKEN || github.token }}
+          path: remy-webapp
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: remy/.nvmrc
+
+      - run: node scripts/sync-contract.mjs --check
+        working-directory: remy
+        env:
+          REMY_WEBAPP_DIR: ${{ github.workspace }}/remy-webapp
