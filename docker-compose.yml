@@ -1,5 +1,11 @@
-# Local infrastructure for Remy. `npm run dev:db` starts it; `npm run dev`
-# starts it and then the API in watch mode.
+# Local infrastructure for Remy. `npm run dev:db` starts Mongo; `npm run dev`
+# starts it and then the API in watch mode on the host.
+#
+# The `app` service builds and runs the backend itself (the Dockerfile) and is
+# behind a profile, so it only starts when asked for:
+#   npm run docker:up      # = docker compose --profile app up -d --build
+#   npm run docker:logs
+#   npm run docker:down
 services:
   mongo:
     image: mongo:7
@@ -14,6 +20,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  app:
+    profiles: ['app']
+    build: .
+    image: remy-backend
+    container_name: remy-app
+    restart: unless-stopped
+    init: true
+    # Everything else (tokens, OWNER_TELEGRAM_ID, BOT_MODE, ...) comes from
+    # .env; MONGODB_URI is overridden to reach the mongo service by name.
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/remy
+      PORT: '3000'
+    ports:
+      - '3000:3000'
+    depends_on:
+      mongo:
+        condition: service_healthy
 
 volumes:
   remy-mongo-data:
