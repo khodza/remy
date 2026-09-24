@@ -6,6 +6,7 @@ import { TaskModule } from '../task/task.module';
 import { UserModule } from '../user/user.module';
 import { OpenAIModule } from '../openai/openai.module';
 import { AuthService } from './services/auth.service';
+import { HealthService } from './services/health.service';
 import { InitDataGuard } from './guards/init-data.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
@@ -19,6 +20,7 @@ import { CategoryController } from './controllers/category.controller';
 import { CalendarController } from './controllers/calendar.controller';
 import { ExportController } from './controllers/export.controller';
 import { DataModule } from '../data/data.module';
+import { NotificationModule } from '../notification/notification.module';
 import { getEnv } from '@common/config';
 import { GetSettingsUsecase, UpdateSettingsUsecase } from '@usecases/settings';
 import {
@@ -47,6 +49,7 @@ import {
     UserModule,
     OpenAIModule,
     DataModule,
+    NotificationModule, // TelegramBotService for the health check
   ],
   controllers: [
     AuthController,
@@ -61,6 +64,7 @@ import {
   ],
   providers: [
     AuthService,
+    HealthService,
     GetSettingsUsecase,
     UpdateSettingsUsecase,
     ListCategoriesUsecase,
