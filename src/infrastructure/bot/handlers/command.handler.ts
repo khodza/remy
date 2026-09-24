@@ -6,7 +6,7 @@ import { ListListsUsecase } from '@usecases/task/list-lists';
 import { escapeHtml } from '../html';
 import { chunkLines } from '../chunk';
 import { describeRecurrence } from '@common/recurrence';
-import { formatForUserShort } from '@common/format-date';
+import { formatForUserShort, zoneHint } from '@common/format-date';
 import type { Recurrence, Task } from '@domain/task';
 import type { User } from '@domain/user';
 import { resolveTimezone, toEnsureUserInput } from '../user-input';
@@ -74,14 +74,14 @@ export function commandArgument(text: string | undefined): string {
 }
 
 /** "⏰ Thu 16 Apr, 11:00", "(snoozed until …)" when delayed, "📥 no date" for todos. */
-function whenLine(
-  task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'allDay'>,
+export function whenLine(
+  task: Pick<Task, 'scheduledAt' | 'snoozedUntil' | 'allDay' | 'timezone'>,
   timezone: string,
 ): string {
   if (task.scheduledAt === null) return '📥 no date';
   const base = task.allDay
     ? `📅 ${formatForUserShort(task.scheduledAt, timezone, true)}`
-    : `⏰ ${formatForUserShort(task.scheduledAt, timezone)}`;
+    : `⏰ ${formatForUserShort(task.scheduledAt, timezone)}${zoneHint(task.scheduledAt, task.timezone, timezone)}`;
   return task.snoozedUntil
     ? `${base} (snoozed until ${formatForUserShort(task.snoozedUntil, timezone)})`
     : base;

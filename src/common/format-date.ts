@@ -35,3 +35,22 @@ export function formatClockForUser(
 ): string {
   return allDay ? 'all day' : formatInTimeZone(date, timezone, 'HH:mm');
 }
+
+/**
+ * " (09:00 Berlin time)" when a task was made in another zone than the one
+ * the user reads in now and the two clocks differ at that instant; empty
+ * otherwise (same zone, same offset, or an all-day task). Appended to the
+ * profile-zone time so a moved user can still recognise "the 9 o'clock".
+ */
+export function zoneHint(
+  date: Date,
+  taskZone: string,
+  userZone: string,
+  allDay = false,
+): string {
+  if (allDay || taskZone === userZone) return '';
+  const there = formatInTimeZone(date, taskZone, 'HH:mm');
+  if (there === formatInTimeZone(date, userZone, 'HH:mm')) return '';
+  const city = (taskZone.split('/').pop() ?? taskZone).replace(/_/g, ' ');
+  return ` <i>(${there} ${city} time)</i>`;
+}

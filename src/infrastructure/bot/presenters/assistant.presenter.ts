@@ -10,6 +10,7 @@ import {
   formatClockForUser,
   formatForUser,
   formatForUserShort,
+  zoneHint,
 } from '@common/format-date';
 import { escapeHtml } from '../html';
 
@@ -109,7 +110,10 @@ export function presentAssistantResult(
         const due = effectiveDueAt(t);
         const occurrenceOnly =
           t.recurrence && t.snoozedUntil ? ' <i>(this time only)</i>' : '';
-        return `⏭ ${escapeHtml(t.description)} → <b>${due ? formatForUserShort(due, timezone, t.allDay) : '—'}</b>${occurrenceOnly}`;
+        const when = due
+          ? `<b>${formatForUserShort(due, timezone, t.allDay)}</b>${zoneHint(due, t.timezone, timezone, t.allDay)}`
+          : '<b>—</b>';
+        return `⏭ ${escapeHtml(t.description)} → ${when}${occurrenceOnly}`;
       });
       for (const t of result.skipped) {
         lines.push(
@@ -157,7 +161,7 @@ function taskBlock(task: Task, timezone: string): string {
     due
       ? task.allDay
         ? `📅 ${formatForUser(due, timezone, true)}`
-        : `⏰ ${formatForUser(due, timezone)}`
+        : `⏰ ${formatForUser(due, timezone)}${zoneHint(due, task.timezone, timezone)}`
       : '📥 No date: saved to your Inbox',
   );
   const repeat = describeRecurrence(task.recurrence, timezone);

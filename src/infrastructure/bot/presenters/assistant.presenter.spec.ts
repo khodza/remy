@@ -146,7 +146,29 @@ describe('presentAssistantResult', () => {
       tz,
       now,
     );
-    expect(moved.html).toContain('Mon 21 Sep, 12:00');
+    // …with the task's own clock as a hint, so "the 9 o'clock standup"
+    // is still recognisable after a move; not for the same zone or offset.
+    expect(moved.html).toContain(
+      '<b>Mon 21 Sep, 12:00</b> <i>(09:00 Berlin time)</i>',
+    );
+    const created = presentAssistantResult(
+      { kind: 'created', undoId: 'u', tasks: [berlinTask] },
+      tz,
+      now,
+    );
+    expect(created.html).toContain(
+      '⏰ Mon 21 Sep 2026, 12:00 <i>(09:00 Berlin time)</i>',
+    );
+    const sameClock = presentAssistantResult(
+      {
+        kind: 'created',
+        undoId: 'u',
+        tasks: [makeTask({ ...berlinTask, timezone: 'Europe/Paris' })],
+      },
+      'Europe/Berlin',
+      now,
+    );
+    expect(sameClock.html).not.toContain('time)</i>');
 
     // Across the DST switch the profile zone's offset changes, the task
     // zone's does not: 09:00 Tashkent is 06:00 Berlin in summer and 05:00
