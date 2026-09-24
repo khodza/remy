@@ -24,14 +24,17 @@ describe('DeleteAllDataUsecase', () => {
     const tasks = mockTaskRepository();
     tasks.deleteAllForUser.mockResolvedValue(7);
     const conversations = mockConversationRepository();
+    const google = { delete: jest.fn().mockResolvedValue(true) };
 
     const result = await new DeleteAllDataUsecase(
       users,
       tasks,
       conversations,
+      google as never,
     ).execute({ userId: 'user-1' });
 
     expect(result).toEqual({ deletedTasks: 7 });
+    expect(google.delete).toHaveBeenCalledWith('user-1');
     expect(tasks.deleteAllForUser).toHaveBeenCalledWith('user-1');
     expect(conversations.deleteAllForChat).toHaveBeenCalledWith(42);
     expect(users.current()).toMatchObject({
